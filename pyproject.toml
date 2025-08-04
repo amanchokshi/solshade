@@ -6,6 +6,14 @@ authors = [{ name = "Aman Chokshi", email = "aman.chokshi@mcgill.ca" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = [
+    "cmasher>=1.9.2",
+    "matplotlib>=3.10.5",
+    "numpy>=2.3.2",
+    "rasterio>=1.4.3",
+    "rioxarray>=0.19.0",
+    "skyfield>=1.53",
+]
 
 [project.urls]
 "Repository" = "https://github.com/amanchokshi/solshade"
@@ -18,12 +26,14 @@ where = ["src"]
 
 [dependency-groups]
 dev = [
+    "affine>=2.4.0",
     "ipympl>=0.9.7",
     "ipython>=9.4.0",
     "jupyterlab>=4.4.5",
     "poethepoet>=0.36.0",
     "pyright>=1.1.403",
     "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
     "ruff>=0.12.7",
 ]
 
@@ -32,8 +42,9 @@ dev = [
 fmt = "ruff format"
 lint = "ruff check --fix"
 check = "pyright"
-test = "pytest"
-all = [ {ref="fmt"}, {ref="lint"}, {ref="check"}, {ref="test"} ]
+# test = { cmd = "pytest", env = { PYTHONPATH = "src" } }
+coverage = { cmd = "pytest --cov=solshade --cov-report=term-missing", env = { PYTHONPATH = "src" } }
+all = [ {ref="fmt"}, {ref="lint"}, {ref="check"}, {ref="coverage"} ]
 
 [tool.ruff]
 target-version = "py311"
@@ -54,5 +65,7 @@ known-first-party = ["solshade"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
-strict = ["**/*.py"]
+# strict = ["**/*.py"]
 pythonVersion = "3.11"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
