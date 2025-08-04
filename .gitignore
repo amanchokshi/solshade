@@ -208,3 +208,6 @@ __marimo__/
 
 # Virtual Envs
 .python-version
+
+# The stupid mac files
+.DS_Store
