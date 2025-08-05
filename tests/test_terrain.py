@@ -15,7 +15,7 @@ import pytest
 import xarray as xr
 from affine import Affine
 
-from solshade.terrain import compute_slope_aspect, load_dem
+from solshade.terrain import compute_hillshade, compute_slope_aspect, load_dem
 
 
 def test_load_valid_dem():
@@ -132,3 +132,42 @@ def test_linear_slope_north():
 
     assert np.allclose(slope.values, slope.values[0, 0]), "Slope should be constant"
     assert np.allclose(aspect.values, 0), "Aspect should be 0° (downslope north)"
+
+
+def test_hillshade_shape_and_range():
+    """Hillshade output should match input shape and values should be between 0 and 1."""
+    slope = xr.DataArray([[30, 45], [60, 75]], dims=["y", "x"])
+    aspect = xr.DataArray([[0, 90], [180, 270]], dims=["y", "x"])
+    hillshade = compute_hillshade(slope, aspect)
+
+    assert hillshade.shape == slope.shape
+    assert np.all((hillshade >= 0) & (hillshade <= 1))
+
+
+def test_flat_slope_hillshade():
+    """Flat terrain should result in constant hillshade equal to cos(altitude)."""
+    slope = xr.DataArray(np.zeros((2, 2)), dims=["y", "x"])
+    aspect = xr.DataArray(np.zeros((2, 2)), dims=["y", "x"])
+    hillshade = compute_hillshade(slope, aspect, azimuth_deg=0, altitude_deg=60)
+
+    expected = np.cos(np.radians(30))  # 60° altitude → zenith angle = 30°
+    assert np.allclose(hillshade.values, expected)
+
+
+def test_slope_only_hillshade_decreases():
+    """Steeper slopes should result in lower hillshade for fixed lighting."""
+    slope_low = xr.DataArray([[30]], dims=["y", "x"])
+    slope_high = xr.DataArray([[80]], dims=["y", "x"])
+    aspect = xr.DataArray([[0]], dims=["y", "x"])
+    h_low = compute_hillshade(slope_low, aspect)
+    h_high = compute_hillshade(slope_high, aspect)
+
+    assert h_low.values > h_high.values
+
+
+def test_invalid_dimensions_raise():
+    """Raise error if slope/aspect inputs have mismatched shapes."""
+    slope = xr.DataArray(np.zeros((3, 3)), dims=["y", "x"])
+    aspect = xr.DataArray(np.zeros((2, 2)), dims=["y", "x"])
+    with pytest.raises(xr.AlignmentError, match="conflicting dimension sizes"):
+        compute_hillshade(slope, aspect)

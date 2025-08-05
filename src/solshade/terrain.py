@@ -100,3 +100,50 @@ def compute_slope_aspect(dem: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]
     )
 
     return slope, aspect
+
+
+def compute_hillshade(
+    slope: xr.DataArray,
+    aspect: xr.DataArray,
+    azimuth_deg: float = 315.0,
+    altitude_deg: float = 45.0,
+) -> xr.DataArray:
+    """
+    Compute a hillshade array using slope and aspect with Lambertian illumination.
+
+    Parameters
+    ----------
+    slope : xarray.DataArray
+        Slope in degrees.
+    aspect : xarray.DataArray
+        Aspect in degrees clockwise from north.
+    azimuth_deg : float, optional
+        Azimuth angle of the sun (0° = north, 90° = east). Default is 315°.
+    altitude_deg : float, optional
+        Altitude angle of the sun above the horizon. Default is 45°.
+
+    Returns
+    -------
+    hillshade : xarray.DataArray
+        Normalized hillshade values from 0 (dark) to 1 (bright),
+        preserving coordinates and CRS metadata.
+
+    Notes
+    -----
+    - Uses a Lambertian reflection model.
+    - All input and output arrays are 2D.
+    """
+    slope_rad = np.radians(slope)
+    aspect_rad = np.radians(aspect)
+    az_rad = np.radians(azimuth_deg)
+    alt_rad = np.radians(altitude_deg)
+
+    shaded = np.sin(alt_rad) * np.cos(slope_rad) + np.cos(alt_rad) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad)
+    hillshade = np.clip(shaded, 0, 1)
+
+    return xr.DataArray(
+        hillshade,
+        coords=slope.coords,
+        dims=slope.dims,
+        attrs={"units": "unitless", "long_name": "hillshade"},
+    )

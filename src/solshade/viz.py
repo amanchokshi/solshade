@@ -12,9 +12,10 @@ All plots use physical coordinates (easting/northing in meters) and meaningful c
 
 import cmasher as cmr
 import matplotlib.pyplot as plt
-import numpy as np
 import xarray as xr
 from matplotlib.axes import Axes
+
+from solshade.terrain import compute_hillshade
 
 
 def _get_extent(data: xr.DataArray) -> tuple[float, float, float, float]:
@@ -59,8 +60,8 @@ def plot_dem(dem: xr.DataArray, ax: Axes | None = None) -> Axes:
         _, ax = plt.subplots()
 
     extent = _get_extent(dem)
-    img = ax.imshow(dem.values, cmap=cmr.ocean, extent=extent, origin="upper")
-    ax.contour(dem.x, dem.y, dem.values, levels=10, colors="k", linewidths=0.5)
+    img = ax.imshow(dem.values, cmap=cmr.savanna, extent=extent, origin="upper")
+    ax.contour(dem.x, dem.y, dem.values, levels=9, colors="whitesmoke", linewidths=0.7, alpha=0.9, linestyles="dotted")
     ax.set_title("Digital Elevation Model")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
@@ -155,18 +156,9 @@ def plot_hillshade(
     if ax is None:
         _, ax = plt.subplots()
 
-    # Convert angles to radians
-    slope_rad = np.radians(slope)
-    aspect_rad = np.radians(aspect)
-    az_rad = np.radians(azimuth_deg)
-    alt_rad = np.radians(altitude_deg)
-
-    # Lambertian hillshade model
-    shaded = np.sin(alt_rad) * np.cos(slope_rad) + np.cos(alt_rad) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad)
-    hillshade = np.clip(shaded, 0, 1)
-
+    hillshade = compute_hillshade(slope, aspect, azimuth_deg, altitude_deg)
     extent = _get_extent(slope)
-    ax.imshow(hillshade, cmap=cmr.swamp, extent=extent, origin="upper")
+    ax.imshow(hillshade.values, cmap=cmr.savanna, extent=extent, origin="upper")
     ax.set_title(f"Hillshade (Azimuth: {azimuth_deg}°, Altitude: {altitude_deg}°)")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
