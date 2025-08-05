@@ -6,6 +6,7 @@ authors = [{ name = "Aman Chokshi", email = "aman.chokshi@mcgill.ca" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
+
 dependencies = [
     "cmasher>=1.9.2",
     "matplotlib>=3.10.5",
@@ -13,16 +14,25 @@ dependencies = [
     "rasterio>=1.4.3",
     "rioxarray>=0.19.0",
     "skyfield>=1.53",
+    "typer>=0.16.0",
 ]
 
 [project.urls]
-"Repository" = "https://github.com/amanchokshi/solshade"
+Repository = "https://github.com/amanchokshi/solshade"
+
+[project.scripts]
+solshade = "solshade.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+packages = { find = { where = ["src"] } }
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.uv]
+package = true
 
 [dependency-groups]
 dev = [
@@ -38,25 +48,24 @@ dev = [
 ]
 
 [tool.poe.tasks]
-# run with eg `uv run poe fmt`
 fmt = "ruff format"
 lint = "ruff check --fix"
 check = "pyright"
-# test = { cmd = "pytest", env = { PYTHONPATH = "src" } }
 coverage = { cmd = "pytest --cov=solshade --cov-report=term-missing", env = { PYTHONPATH = "src" } }
-all = [ {ref="fmt"}, {ref="lint"}, {ref="check"}, {ref="coverage"} ]
+all = ["fmt", "lint", "check", "coverage"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+src = ["src"]
 
 [tool.ruff.lint]
 select = [
-	"A",    # warn about shadowing built-ins
-	"E",    # style stuff, whitespaces
-	"F",    # important pyflakes lints
-	"I",    # import sorting
-	"N",    # naming
+    "A",  # built-in shadowing
+    "E",  # style
+    "F",  # pyflakes
+    "I",  # import sorting
+    "N",  # naming
 ]
 
 [tool.ruff.lint.isort]
@@ -65,7 +74,8 @@ known-first-party = ["solshade"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
-# strict = ["**/*.py"]
 pythonVersion = "3.11"
 reportUnknownMemberType = false
 reportUnknownVariableType = false
+include = ["src"]
+exclude = ["tests", "**/__pycache__"]
