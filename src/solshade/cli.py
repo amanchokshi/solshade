@@ -29,18 +29,18 @@ def compute(
     slope_da, aspect_da = compute_slope_aspect(dem)
 
     if slope:
-        out_path = save_dir / (dem_path.stem + "_slope.tif")
+        out_path = save_dir / (dem_path.stem + "_SLOPE.tif")
         slope_da.rio.to_raster(out_path)
         typer.echo(f"Saved slope to {out_path}")
 
     if aspect:
-        out_path = save_dir / (dem_path.stem + "_aspect.tif")
+        out_path = save_dir / (dem_path.stem + "_ASPECT.tif")
         aspect_da.rio.to_raster(out_path)
         typer.echo(f"Saved aspect to {out_path}")
 
     if hillshade:
         hillshade_da = compute_hillshade(slope_da, aspect_da, azimuth_deg=azimuth, altitude_deg=altitude)
-        out_path = save_dir / f"{dem_path.stem}_hillshade_{int(azimuth)}_{int(altitude)}.tif"
+        out_path = save_dir / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
         hillshade_da.rio.to_raster(out_path)
         typer.echo(f"Saved hillshade to {out_path}")
 
@@ -61,7 +61,7 @@ def plot_dem_cmd(
     ax = plot_dem(dem, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_dem.png")
+        out_path = output_dir / (dem_path.stem + "_DEM.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved DEM plot to {out_path}")
@@ -83,7 +83,7 @@ def plot_slope_cmd(
     ax = plot_slope(slope, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_slope.png")
+        out_path = output_dir / (dem_path.stem + "_SLOPE.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved slope plot to {out_path}")
@@ -105,7 +105,7 @@ def plot_aspect_cmd(
     ax = plot_aspect(aspect, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_aspect.png")
+        out_path = output_dir / (dem_path.stem + "_ASPECT.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved aspect plot to {out_path}")
@@ -129,7 +129,7 @@ def plot_hillshade_cmd(
     ax = plot_hillshade(slope, aspect, azimuth, altitude, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"{dem_path.stem}_hillshade_{int(azimuth)}_{int(altitude)}.png"
+        out_path = output_dir / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.png"
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved hillshade plot to {out_path}")

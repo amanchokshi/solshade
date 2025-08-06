@@ -6,16 +6,16 @@ from pathlib import Path
 import pytest
 
 # Dummy path for test data -- replace with actual test DEM path
-TEST_DATA = Path("tests/data/mars_dem.tif")
+TEST_DATA = Path("tests/data/MARS.tif")
 
 
 @pytest.mark.parametrize(
     "subcommand, expected_suffix",
     [
-        ("slope", "_slope.png"),
-        ("aspect", "_aspect.png"),
-        ("hillshade", "_hillshade_315_45.png"),
-        ("dem", "_dem.png"),
+        ("slope", "_SLOPE.png"),
+        ("aspect", "_ASPECT.png"),
+        ("hillshade", "_HILLSHADE_315_45.png"),
+        ("dem", "_DEM.png"),
     ],
 )
 def test_plot_subcommands(subcommand, expected_suffix):
@@ -50,9 +50,9 @@ def test_compute_subcommand_creates_expected_files():
         )
         assert result.returncode == 0, f"Compute failed with stderr: {result.stderr}"
         expected_files = [
-            outdir / f"{TEST_DATA.stem}_slope.tif",
-            outdir / f"{TEST_DATA.stem}_aspect.tif",
-            outdir / f"{TEST_DATA.stem}_hillshade_315_45.tif",
+            outdir / f"{TEST_DATA.stem}_SLOPE.tif",
+            outdir / f"{TEST_DATA.stem}_ASPECT.tif",
+            outdir / f"{TEST_DATA.stem}_HILLSHADE_315_45.tif",
         ]
         for file in expected_files:
             assert file.exists(), f"{file} was not created"
