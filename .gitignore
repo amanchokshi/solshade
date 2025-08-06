@@ -211,3 +211,6 @@ __marimo__/
 
 # The stupid mac files
 .DS_Store
+
+# Ignore data dir
+data/
