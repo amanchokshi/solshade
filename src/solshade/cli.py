@@ -19,7 +19,7 @@ app = typer.Typer(help="Terrain-aware solar illumination modeling using DEMs and
 
 @app.command()
 def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIFF.")):
-    """Print a neat summary of metadata from a DEM file."""
+    """A neat metadata summary from a DEM file."""
     dem = load_dem(dem_path)
     transform: Affine = dem.rio.transform()
     bounds = dem.rio.bounds()
