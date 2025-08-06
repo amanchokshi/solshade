@@ -10,6 +10,7 @@ These tests verify:
 Synthetic DEMs are used throughout to ensure test coverage and speed.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -158,8 +159,8 @@ def test_invalid_dimensions_raise():
 def test_output_shape_and_dimensions():
     dem = create_mock_dem((16, 16))
     result = compute_horizon_map(dem, n_directions=8, max_distance=100, step=20, chunk_size=8, progress=False)
-    assert result.dims == ("y", "x", "azimuth")
-    assert result.shape == (16, 16, 8)
+    assert result.dims == ("azimuth", "y", "x")
+    assert result.shape == (8, 16, 16)
     assert np.allclose(result.azimuth.values, np.linspace(0, 360, 8, endpoint=False))
 
 
@@ -173,7 +174,7 @@ def test_nan_handling_in_dem():
     dem = create_mock_dem((8, 8))
     dem.values[2:4, 2:4] = np.nan
     result = compute_horizon_map(dem, n_directions=4, max_distance=100, step=20, chunk_size=4, progress=False)
-    assert np.all(np.isnan(result.values[2:4, 2:4]))
+    assert np.all(np.isnan(result.values[:, 2:4, 2:4]))
 
 
 def test_slope_generates_nonzero_horizon():
@@ -189,7 +190,7 @@ def test_crs_and_metadata_retained():
     assert result.rio.crs == dem.rio.crs
     assert result.attrs["units"] == "degrees"
     assert "max_distance_m" in result.attrs
-    assert len(result.attrs["azimuths_deg"]) == 4
+    assert len(json.loads(result.attrs["azimuths_deg"])) == 4
 
 
 def test_serial_execution_with_small_chunks():
