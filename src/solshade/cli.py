@@ -34,32 +34,21 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         console.print(f"  [green]{label:<12}[/green] [white][ {value} ][/white]")
 
     def format_decimal(val: float, int_width: int = 8, frac_width: int = 2) -> str:
-        """
-        Format float so decimal points align by padding integer part to `int_width`.
-        """
         d = Decimal(val).quantize(Decimal(f"1.{'0' * frac_width}"))
         int_part, frac_part = str(d).split(".")
         return f"{int_part.rjust(int_width)}.{frac_part}"
 
     def print_transform(t: Affine):
-        rows = [
-            [t.a, t.b, t.c],
-            [t.d, t.e, t.f],
-            [0.0, 0.0, 1.0],
-        ]
+        rows = [[t.a, t.b, t.c], [t.d, t.e, t.f], [0.0, 0.0, 1.0]]
         label = "[green]TRANSFORM:[/green]"
         indent = " " * 14
 
-        # First row
         line = ", ".join(format_decimal(v) for v in rows[0])
         console.print(f"  {label:<14}   [white]| {line} |[/white]")
-
-        # Next rows
         for row in rows[1:]:
             line = ", ".join(format_decimal(v) for v in row)
             console.print(f" {indent}[white]| {line} |[/white]")
 
-    # Geographic bounds (WGS84)
     if dem.rio.crs and dem.rio.crs.to_epsg() != 4326:
         transformer = Transformer.from_crs(dem.rio.crs, "EPSG:4326", always_xy=True)
         lon_min, lat_min = transformer.transform(bounds[0], bounds[1])
@@ -72,15 +61,10 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
     field("RESOLUTION:", f"{abs(transform.a)} x {abs(transform.e)}")
     print_transform(transform)
 
-    b = ", ".join(f"{v:.1f}" for v in bounds)
-    field("BOUNDS:", b)
-
+    field("BOUNDS:", ", ".join(f"{v:.1f}" for v in bounds))
     field("LATITUDE:", f"{lat_min:.6f} to {lat_max:.6f}")
     field("LONGITUDE:", f"{lon_min:.6f} to {lon_max:.6f}")
-
-    coords = ", ".join(str(c).upper() for c in dem.coords)
-    field("COORDS:", coords)
-
+    field("COORDS:", ", ".join(str(c).upper() for c in dem.coords))
     field("DTYPE:", str(dem.dtype).upper())
 
     console.print("  [green]ATTRIBUTES:[/green]")
@@ -91,60 +75,71 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         console.print(f"\t[white]{str(k).upper()}: {escape(str(pretty))}[/white]")
 
 
-@app.command()
-def compute(
-    dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIFF."),
-    output_dir: Optional[Path] = typer.Option(None, help="Directory to save output GeoTIFFs."),
-    slope: bool = typer.Option(False, help="Compute and save slope."),
-    aspect: bool = typer.Option(False, help="Compute and save aspect."),
-    hillshade: bool = typer.Option(False, help="Compute and save hillshade."),
-    azimuth: float = typer.Option(315.0, help="Sun azimuth for hillshade."),
-    altitude: float = typer.Option(45.0, help="Sun altitude for hillshade."),
-    horizon_map: bool = typer.Option(False, help="Compute and save per-pixel horizon map."),
-    n_directions: int = typer.Option(64, help="Number of azimuthal directions for horizon map."),
-    max_distance: float = typer.Option(5000, help="Maximum ray length in meters for horizon map."),
-    step: float = typer.Option(20, help="Step size in meters for horizon map."),
-    chunk_size: int = typer.Option(32, help="Chunk size in pixels for horizon map."),
-    n_jobs: int = typer.Option(-1, help="Number of parallel jobs (-1 for all cores)."),
-    no_progress: bool = typer.Option(False, help="Disable progress bar during horizon computation."),
-):
-    """Compute slope, aspect, hillshade, and/or horizon map from a DEM and save them as GeoTIFFs."""
+compute_app = typer.Typer(help="Compute slope, aspect, hillshade or horizon maps from DEMs.")
+app.add_typer(compute_app, name="compute")
+
+
+@compute_app.command("slope")
+def compute_slope_cmd(dem_path: Path, output_dir: Optional[Path] = None):
     dem = load_dem(dem_path)
-    save_dir = output_dir or dem_path.parent
-    save_dir.mkdir(parents=True, exist_ok=True)
+    slope_da, _ = compute_slope_aspect(dem)
+    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_SLOPE.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    slope_da.rio.to_raster(out_path)
+    typer.echo(f"Saved slope to {out_path}")
 
-    if slope:
-        slope_da, _ = compute_slope_aspect(dem)
-        out_path = save_dir / f"{dem_path.stem}_SLOPE.tif"
-        slope_da.rio.to_raster(out_path)
-        typer.echo(f"Saved slope to {out_path}")
 
-    if aspect:
-        _, aspect_da = compute_slope_aspect(dem)
-        out_path = save_dir / f"{dem_path.stem}_ASPECT.tif"
-        aspect_da.rio.to_raster(out_path)
-        typer.echo(f"Saved aspect to {out_path}")
+@compute_app.command("aspect")
+def compute_aspect_cmd(dem_path: Path, output_dir: Optional[Path] = None):
+    dem = load_dem(dem_path)
+    _, aspect_da = compute_slope_aspect(dem)
+    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_ASPECT.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    aspect_da.rio.to_raster(out_path)
+    typer.echo(f"Saved aspect to {out_path}")
 
-    if hillshade:
-        slope_da, aspect_da = compute_slope_aspect(dem)
-        hillshade_da = compute_hillshade(slope_da, aspect_da, azimuth_deg=azimuth, altitude_deg=altitude)
-        out_path = save_dir / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
-        hillshade_da.rio.to_raster(out_path)
-        typer.echo(f"Saved hillshade to {out_path}")
 
-    if horizon_map:
-        result = compute_horizon_map(
-            dem,
-            n_directions=n_directions,
-            max_distance=max_distance,
-            step=step,
-            chunk_size=chunk_size,
-            n_jobs=n_jobs,
-            progress=not no_progress,
-        )
-        out_path = save_dir / f"{dem_path.stem}_HORIZON_{int(n_directions)}.tif"
-        result.rio.to_raster(out_path)
-        typer.echo(f"Saved horizon map to {out_path}")
+@compute_app.command("hillshade")
+def compute_hillshade_cmd(
+    dem_path: Path,
+    azimuth: float = 315.0,
+    altitude: float = 45.0,
+    output_dir: Optional[Path] = None,
+):
+    dem = load_dem(dem_path)
+    slope, aspect = compute_slope_aspect(dem)
+    hillshade_da = compute_hillshade(slope, aspect, azimuth, altitude)
+    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    hillshade_da.rio.to_raster(out_path)
+    typer.echo(f"Saved hillshade to {out_path}")
+
+
+@compute_app.command("horizon")
+def compute_horizon_cmd(
+    dem_path: Path,
+    n_directions: int = 64,
+    max_distance: float = 5000,
+    step: float = 20,
+    chunk_size: int = 32,
+    n_jobs: int = -1,
+    no_progress: bool = False,
+    output_dir: Optional[Path] = None,
+):
+    dem = load_dem(dem_path)
+    result = compute_horizon_map(
+        dem,
+        n_directions=n_directions,
+        max_distance=max_distance,
+        step=step,
+        chunk_size=chunk_size,
+        n_jobs=n_jobs,
+        progress=not no_progress,
+    )
+    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_HORIZON_{int(n_directions)}.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    result.rio.to_raster(out_path)
+    typer.echo(f"Saved horizon map to {out_path}")
 
 
 plot_app = typer.Typer(help="Plot dem, aspect, slope or hillshade maps from a DEM and display or save them to pngs.")
@@ -239,42 +234,6 @@ def plot_hillshade_cmd(
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
             plt.show()  # pragma: no cover
-
-
-# @plot_app.command("horizon")
-# def plot_horizon_cmd(
-#     horizon_path: Path = typer.Argument(..., help="Path to HORIZON_*.tif GeoTIFF."),
-#     lat: float = typer.Option(..., help="Latitude of point of interest."),
-#     lon: float = typer.Option(..., help="Longitude of point of interest."),
-#     output_dir: Optional[Path] = typer.Option(None, help="Directory to save polar plot."),
-# ):
-#     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif."""
-#
-#     # horizon_da = rxr.open_rasterio(horizon_path, masked=True).squeeze("band", drop=True)
-#     horizon_da = load_dem(horizon_path)
-#     transformer = Transformer.from_crs("EPSG:4326", horizon_da.rio.crs, always_xy=True)
-#     x, y = transformer.transform(lon, lat)
-#
-#     transform = horizon_da.rio.transform()
-#     row, col = rowcol(transform, x, y)
-#     azimuths = np.linspace(0, 360, horizon_da.shape[0], endpoint=False)
-#     azimuths = np.asarray(json.loads(horizon_da.attrs["azimuths_deg"]))
-#     profile = horizon_da[:, row, col].values
-#
-#     _, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6, 5))
-#     plot_horizon_polar(azimuths, profile, ax)
-#     ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
-#
-#     if output_dir:
-#         output_dir.mkdir(parents=True, exist_ok=True)
-#         out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
-#         plt.tight_layout()
-#         plt.savefig(out_path)
-#         typer.echo(f"Saved horizon polar plot to {out_path}")
-#     else:
-#         plt.tight_layout()
-#         if not os.getenv("SOLSHADE_TEST_MODE"):
-#             plt.show()  # pragma: no cover
 
 
 @plot_app.command("horizon")

@@ -43,46 +43,40 @@ def test_plot_subcommands(subcommand, expected_suffix):
         assert expected_file.exists(), f"{expected_file} was not created"
 
 
-def test_compute_subcommand_creates_expected_files():
+@pytest.mark.parametrize(
+    "subcommand, expected_file",
+    [
+        ("slope", "_SLOPE.tif"),
+        ("aspect", "_ASPECT.tif"),
+        ("hillshade", "_HILLSHADE_315_45.tif"),
+    ],
+)
+def test_compute_subcommands(subcommand, expected_file):
     with tempfile.TemporaryDirectory() as tmpdir:
         outdir = Path(tmpdir)
         result = subprocess.run(
-            [
-                "solshade",
-                "compute",
-                str(TEST_DATA),
-                "--output-dir",
-                str(outdir),
-                "--slope",
-                "--aspect",
-                "--hillshade",
-            ],
+            ["solshade", "compute", subcommand, str(TEST_DATA), "--output-dir", str(outdir)],
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"Compute failed with stderr: {result.stderr}"
-        expected_files = [
-            outdir / f"{TEST_DATA.stem}_SLOPE.tif",
-            outdir / f"{TEST_DATA.stem}_ASPECT.tif",
-            outdir / f"{TEST_DATA.stem}_HILLSHADE_315_45.tif",
-        ]
-        for file in expected_files:
-            assert file.exists(), f"{file} was not created"
+        assert result.returncode == 0, f"{subcommand} failed with stderr: {result.stderr}"
+        expected = outdir / (TEST_DATA.stem + expected_file)
+        assert expected.exists(), f"{expected} was not created"
 
 
-def test_compute_horizon_map_subcommand():
+def test_compute_horizon_subcommand():
     with tempfile.TemporaryDirectory() as tmpdir:
         outdir = Path(tmpdir)
         result = subprocess.run(
             [
                 "solshade",
                 "compute",
+                "horizon",
                 str(TEST_DATA),
                 "--output-dir",
                 str(outdir),
-                "--horizon-map",
                 "--n-directions",
-                "4",  # reduce load for test
+                "4",
                 "--max-distance",
                 "100",
                 "--step",
@@ -101,10 +95,8 @@ def test_compute_horizon_map_subcommand():
 
 @pytest.mark.parametrize("subcommand", ["slope", "aspect", "hillshade", "dem"])
 def test_plot_subcommands_show(subcommand):
-    """Simulate interactive mode (no output-dir) and suppress plt.show() with env var."""
     env = os.environ.copy()
-    env["SOLSHADE_TEST_MODE"] = "1"  # This disables plt.show() inside the CLI
-
+    env["SOLSHADE_TEST_MODE"] = "1"
     result = subprocess.run(
         ["solshade", "plot", subcommand, str(TEST_DATA)],
         capture_output=True,
@@ -115,17 +107,9 @@ def test_plot_subcommands_show(subcommand):
 
 
 def test_meta_subcommand_output():
-    """Test that the `meta` command runs and outputs expected metadata summary."""
-    result = subprocess.run(
-        ["solshade", "meta", str(TEST_DATA)],
-        capture_output=True,
-        text=True,
-    )
+    result = subprocess.run(["solshade", "meta", str(TEST_DATA)], capture_output=True, text=True)
     assert result.returncode == 0, f"`meta` failed: {result.stderr}"
-
     out = result.stdout
-
-    # Check for key metadata fields
     assert "METADATA:" in out
     assert "CRS:" in out
     assert "SHAPE:" in out
@@ -135,15 +119,12 @@ def test_meta_subcommand_output():
     assert "COORDS:" in out
     assert "DTYPE:" in out
     assert "ATTRIBUTES:" in out
-
-    # Check for some known values from the test DEM
     assert "EPSG:3413" in out
     assert "1250, 1250" in out
-    assert "2.00" in out  # Resolution
+    assert "2.00" in out
 
 
 def test_attribute_truncation():
-    """Ensure long string-like attribute values are truncated and tagged."""
     mock_dem = MagicMock()
     mock_transform = Affine(2.0, 0.0, -824430.0, 0.0, -2.0, -801210.0)
     mock_dem.rio.transform.return_value = mock_transform
@@ -152,8 +133,6 @@ def test_attribute_truncation():
     mock_dem.coords = {"x": None, "y": None}
     mock_dem.dtype = "float32"
     mock_dem.attrs = {"azimuths_deg": "[" + "1234567890" * 10 + "]"}
-
-    # Use a real CRS (not a MagicMock)
     mock_dem.rio.crs = CRS.from_epsg(4326)
 
     with patch("solshade.cli.load_dem", return_value=mock_dem):
@@ -169,39 +148,30 @@ def mock_horizon_file(tmp_path):
     n_directions = 360
     transform = from_origin(-1000000, 1000000, 2000, 2000)
     crs = CRS.from_epsg(3413)
-
     data = np.random.uniform(0, 20, size=(n_directions, ny, nx)).astype(np.float32)
     azimuths = np.linspace(0, 360, n_directions, endpoint=False)
-
     da = xr.DataArray(
         data,
         dims=("band", "y", "x"),
         coords={
             "band": np.arange(1, n_directions + 1),
-            "x": np.arange(nx) * transform.a + transform.c,
-            "y": np.arange(ny) * transform.e + transform.f,
+            "x": np.arange(nx) * transform.a + transform.c,  # type: ignore[attr-defined]
+            "y": np.arange(ny) * transform.e + transform.f,  # type: ignore[attr-defined]
         },
-        attrs={
-            "azimuths_deg": json.dumps(azimuths.tolist()),
-        },
+        attrs={"azimuths_deg": json.dumps(azimuths.tolist())},
     )
-
     da.rio.write_crs(crs, inplace=True)
     da.rio.write_transform(transform, inplace=True)
-
     tif_path = tmp_path / "HORIZON_TEST.tif"
     da.rio.to_raster(tif_path)
     return tif_path
 
 
 def test_plot_horizon_cmd_within_bounds(mock_horizon_file, tmp_path):
-    # Match the mock raster's transform
-    center_x = -1_000_000 + 2000 * 25
-    center_y = 1_000_000 - 2000 * 25
-
+    transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
+    center_x, center_y = transform * (25, 25)  # type: ignore
     transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
     lon, lat = transformer.transform(center_x, center_y)
-
     result = runner.invoke(
         app,
         ["plot", "horizon", "--lat", str(lat), "--lon", str(lon), str(mock_horizon_file), "--output-dir", str(tmp_path)],
@@ -216,25 +186,19 @@ def test_plot_horizon_cmd_out_of_bounds(mock_horizon_file):
 
 
 def test_plot_horizon_cmd_show(monkeypatch, mock_horizon_file):
-    """Test that plot_horizon_cmd triggers plt.show() when SOLSHADE_TEST_MODE is not set."""
     from unittest.mock import patch
 
     from rasterio.transform import from_origin
 
-    # Use center pixel and reverse transform to get in-bounds lat/lon
     transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
-    center_x, center_y = transform * (25, 25)
+    center_x, center_y = transform * (25, 25)  # type: ignore
     reverse_transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
     lon, lat = reverse_transformer.transform(center_x, center_y)
-
-    # Ensure SOLSHADE_TEST_MODE is not set
     monkeypatch.delenv("SOLSHADE_TEST_MODE", raising=False)
-
     with patch("matplotlib.pyplot.show") as mock_show:
         result = runner.invoke(
             app,
             ["plot", "horizon", "--lat", str(lat), "--lon", str(lon), str(mock_horizon_file)],
         )
-
         assert result.exit_code == 0, result.stderr
         mock_show.assert_called_once()
