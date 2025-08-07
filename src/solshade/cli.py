@@ -1,17 +1,19 @@
+import json
 import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import typer
 from matplotlib import pyplot as plt
 from pyproj import Transformer
-from rasterio.transform import Affine
+from rasterio.transform import Affine, rowcol
 from rich.console import Console
 from rich.markup import escape
 
 from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, load_dem
-from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_slope
+from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_slope
 
 console = Console()
 app = typer.Typer(help="Terrain-aware solar illumination modeling using DEMs and orbital solar geometry.")
@@ -66,7 +68,7 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         lon_min, lat_min, lon_max, lat_max = bounds
 
     field("CRS:", dem.rio.crs.to_string() if dem.rio.crs else "None")
-    field("SHAPE:", f"{dem.shape[0]} x {dem.shape[1]}")
+    field("SHAPE:", f"{str(dem.shape)[1:-1]}")
     field("RESOLUTION:", f"{abs(transform.a)} x {abs(transform.e)}")
     print_transform(transform)
 
@@ -140,7 +142,7 @@ def compute(
             n_jobs=n_jobs,
             progress=not no_progress,
         )
-        out_path = save_dir / f"{dem_path.stem}_HORIZON.tif"
+        out_path = save_dir / f"{dem_path.stem}_HORIZON_{int(n_directions)}.tif"
         result.rio.to_raster(out_path)
         typer.echo(f"Saved horizon map to {out_path}")
 
@@ -233,6 +235,42 @@ def plot_hillshade_cmd(
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved hillshade plot to {out_path}")
+    else:
+        plt.tight_layout()
+        if not os.getenv("SOLSHADE_TEST_MODE"):
+            plt.show()  # pragma: no cover
+
+
+@plot_app.command("horizon")
+def plot_horizon_cmd(
+    horizon_path: Path = typer.Argument(..., help="Path to HORIZON_*.tif GeoTIFF."),
+    lat: float = typer.Option(..., help="Latitude of point of interest."),
+    lon: float = typer.Option(..., help="Longitude of point of interest."),
+    output_dir: Optional[Path] = typer.Option(None, help="Directory to save polar plot."),
+):
+    """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif."""
+
+    # horizon_da = rxr.open_rasterio(horizon_path, masked=True).squeeze("band", drop=True)
+    horizon_da = load_dem(horizon_path)
+    transformer = Transformer.from_crs("EPSG:4326", horizon_da.rio.crs, always_xy=True)
+    x, y = transformer.transform(lon, lat)
+
+    transform = horizon_da.rio.transform()
+    row, col = rowcol(transform, x, y)
+    azimuths = np.linspace(0, 360, horizon_da.shape[0], endpoint=False)
+    azimuths = np.asarray(json.loads(horizon_da.attrs["azimuths_deg"]))
+    profile = horizon_da[:, row, col].values
+
+    _, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6, 5))
+    plot_horizon_polar(azimuths, profile, ax)
+    ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
+
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
+        plt.tight_layout()
+        plt.savefig(out_path)
+        typer.echo(f"Saved horizon polar plot to {out_path}")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):

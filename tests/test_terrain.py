@@ -20,7 +20,7 @@ import xarray as xr
 from affine import Affine
 from rasterio.crs import CRS
 
-from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, load_dem
+from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, horizon_interp, load_dem
 
 # -------------------------
 # Elevation functions
@@ -241,3 +241,44 @@ def test_nan_propagation():
     dem.rio.write_transform(Affine(1, 0, 0, 0, -1, 0), inplace=True)
     result = compute_horizon_map(dem, n_directions=4, max_distance=100, step=50, chunk_size=1, progress=False)
     assert np.isnan(result.sel(x=0, y=1, azimuth=0, method="nearest"))
+
+
+def test_full_cubic_valid():
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 10 * np.sin(np.radians(az))
+    interp = horizon_interp(az, vals)
+    assert interp is not None
+    assert np.isclose(interp(0), interp(360), atol=1e-6)
+
+
+def test_linear_fallback_on_nans():
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 10 * np.sin(np.radians(az))
+    vals[10:50] = np.nan  # > fallback_frac
+    interp = horizon_interp(az, vals)
+    assert interp is not None
+    assert np.isclose(interp(0), interp(360), atol=1e-6)
+
+
+def test_all_nans_returns_none():
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = np.full_like(az, np.nan)
+    assert horizon_interp(az, vals) is None
+
+
+def test_cubic_unphysical_fallback():
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 10 * np.sin(np.radians(az))
+    vals[5] = 200.0  # force invalid interpolation
+    interp = horizon_interp(az, vals)
+    assert interp is not None
+    assert np.isclose(interp(0), interp(360), atol=1e-6)
+
+
+def test_wrapped_eval():
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 5 * np.cos(np.radians(az))
+    interp = horizon_interp(az, vals)
+    assert interp is not None
+    assert np.isclose(interp(720), interp(0), atol=1e-6)
+    assert np.isclose(interp(-360), interp(0), atol=1e-6)

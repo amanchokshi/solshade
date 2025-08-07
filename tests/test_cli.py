@@ -1,15 +1,18 @@
+import json
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
+import xarray as xr
 from affine import Affine
 from pyproj import CRS
 from typer.testing import CliRunner
 
-from solshade.cli import app
+from solshade.cli import app, plot_app
 
 runner = CliRunner()
 
@@ -91,7 +94,7 @@ def test_compute_horizon_map_subcommand():
             text=True,
         )
         assert result.returncode == 0, f"Horizon map compute failed with stderr: {result.stderr}"
-        expected_file = outdir / f"{TEST_DATA.stem}_HORIZON.tif"
+        expected_file = outdir / f"{TEST_DATA.stem}_HORIZON_4.tif"
         assert expected_file.exists(), f"{expected_file} was not created"
 
 
@@ -134,7 +137,7 @@ def test_meta_subcommand_output():
 
     # Check for some known values from the test DEM
     assert "EPSG:3413" in out
-    assert "1250 x 1250" in out
+    assert "1250, 1250" in out
     assert "2.00" in out  # Resolution
 
 
@@ -157,3 +160,76 @@ def test_attribute_truncation():
         assert result.exit_code == 0
         assert "AZIMUTHS_DEG" in result.stdout
         assert "(truncated)" in result.stdout
+
+
+@pytest.fixture
+def dummy_horizon_geotiff(tmp_path):
+    """Create a temporary dummy HORIZON_*.tif file with metadata."""
+    azimuths = np.linspace(0, 360, 64, endpoint=False)
+    ny, nx = 5, 5
+    data = np.random.uniform(0, 30, size=(len(azimuths), ny, nx))
+
+    # Create DataArray
+    da = xr.DataArray(
+        data,
+        dims=("band", "y", "x"),
+        coords={"band": np.arange(len(azimuths)), "y": np.arange(ny), "x": np.arange(nx)},
+        name="horizon",
+    )
+
+    # Set CRS and transform
+    transform = Affine.translation(0, 0) * Affine.scale(1, -1)  # dummy geotransform
+    da.rio.write_crs("EPSG:4326", inplace=True)
+    da.rio.write_transform(transform, inplace=True)
+
+    # Store azimuth metadata
+    da.attrs["azimuths_deg"] = json.dumps(azimuths.tolist())
+
+    out_path = tmp_path / "HORIZON_dummy.tif"
+    da.rio.to_raster(out_path)
+
+    return out_path
+
+
+def test_plot_horizon_cmd_saves_plot(dummy_horizon_geotiff, tmp_path, monkeypatch):
+    """Test that the command saves a polar plot to the output directory."""
+    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+
+    result = runner.invoke(
+        plot_app,
+        [
+            "horizon",
+            str(dummy_horizon_geotiff),
+            "--lat",
+            "0.0",
+            "--lon",
+            "0.0",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    files = list(tmp_path.glob("*.png"))
+    assert len(files) == 1
+    assert files[0].name.startswith("HORIZON_dummy")
+    assert files[0].suffix == ".png"
+
+
+def test_plot_horizon_cmd_show(monkeypatch, dummy_horizon_geotiff):
+    """Test that the command completes when output_dir is not specified."""
+    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+
+    result = runner.invoke(
+        plot_app,
+        [
+            "horizon",
+            str(dummy_horizon_geotiff),
+            "--lat",
+            "0.0",
+            "--lon",
+            "0.0",
+        ],
+    )
+
+    assert result.exit_code == 0

@@ -1,9 +1,11 @@
 import numpy as np
 import xarray as xr
+from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.projections.polar import PolarAxes
 
 from solshade.terrain import compute_slope_aspect
-from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_slope
+from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_slope
 
 
 def create_test_dem(shape=(10, 10), dx=1.0, dy=1.0, values=None) -> xr.DataArray:
@@ -87,3 +89,52 @@ def test_plot_hillshade():
     ax = plot_hillshade(slope, aspect, azimuth_deg=270, altitude_deg=30)
     assert isinstance(ax.figure, Figure)
     assert "Hillshade" in ax.get_title()
+
+
+def test_plot_horizon_polar_basic():
+    """Test that the function returns a PolarAxes object and does not error."""
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 10 + 5 * np.sin(np.deg2rad(az))
+    ax = plot_horizon_polar(az, vals)
+    assert isinstance(ax, PolarAxes)
+
+
+def test_plot_horizon_polar_closed_curve():
+    """Test that the horizon curve is closed (wraps back to starting point)."""
+    az = np.linspace(0, 360, 64, endpoint=False)
+    vals = 15 + 10 * np.cos(np.deg2rad(az))
+    ax = plot_horizon_polar(az, vals)
+
+    # Find the line with the most points (should be the horizon line)
+    horizon_line = max(ax.lines, key=lambda line: len(line.get_xdata()))
+    az_data = horizon_line.get_xdata()
+    r_data = horizon_line.get_ydata()
+
+    # Should have one more point than input
+    assert len(az_data) == len(az) + 1
+    assert len(r_data) == len(vals) + 1
+
+    # First and last points match (closed curve)
+    assert np.isclose(az_data[0], az_data[-1])
+    assert np.isclose(r_data[0], r_data[-1], rtol=1e-5, atol=1e-8)
+
+
+def test_plot_horizon_polar_passes_external_axis():
+    """Ensure function uses provided axis rather than making a new one."""
+    fig, ax = plt.subplots(subplot_kw={"projection": "polar"})
+    az = np.linspace(0, 360, 32, endpoint=False)
+    vals = np.full_like(az, 5)
+    ax_out = plot_horizon_polar(az, vals, ax=ax)
+    assert ax_out is ax
+
+
+def test_plot_horizon_polar_handles_negative_vals():
+    """Ensure that negative horizon values do not break the plot."""
+    az = np.linspace(0, 360, 128, endpoint=False)
+    vals = -10 + 20 * np.cos(np.deg2rad(az))
+    ax = plot_horizon_polar(az, vals)
+
+    # Ensure the radial limits span the negative values
+    rmin, rmax = ax.get_rmin(), ax.get_rmax()  # type: ignore[attr-defined]
+    assert rmin < 0
+    assert rmax > 0

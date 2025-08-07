@@ -10,8 +10,11 @@ This module provides functions to visualize:
 All plots use physical coordinates (easting/northing in meters) and meaningful colorbars.
 """
 
+from typing import Optional
+
 import cmasher as cmr
 import matplotlib.pyplot as plt
+import numpy as np
 import xarray as xr
 from matplotlib.axes import Axes
 
@@ -162,5 +165,120 @@ def plot_hillshade(
     ax.set_title(f"Hillshade (Azimuth: {azimuth_deg}°, Altitude: {altitude_deg}°)")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
+
+    return ax
+
+
+def plot_horizon_polar(
+    azimuths: np.ndarray,
+    horizon_vals: np.ndarray,
+    ax: Optional[Axes] = None,
+) -> Axes:
+    """
+    Plot a stylized polar horizon profile with compass-style ticks and shading.
+
+    Parameters
+    ----------
+    azimuths : array-like
+        Azimuth angles in degrees (clockwise from North).
+    horizon_vals : array-like
+        Horizon elevation values (in degrees).
+    ax : matplotlib.axes.PolarAxes, optional
+        Polar axis to plot on. If None, a new one is created.
+
+    Returns
+    -------
+    ax : matplotlib.axes.PolarAxes
+        The axis with the plotted horizon profile.
+    """
+    if ax is None:
+        _, ax = plt.subplots(subplot_kw={"projection": "polar"})
+
+    # Close the curve
+    az_rad = np.deg2rad(np.append(azimuths, azimuths[0]))
+    horizon_vals = np.append(horizon_vals, horizon_vals[0])
+
+    rmax = np.nanmax(horizon_vals)
+    rmin = np.nanmin(horizon_vals)
+    pad = 5
+
+    # Fill under the curve (with color and hatch)
+    ax.fill(
+        az_rad,
+        horizon_vals,
+        facecolor=cmr.pride([0.3]),
+        edgecolor=cmr.pride([0.21]),
+        hatch="/////",
+        linewidth=0,
+        alpha=0.21,
+        zorder=1,
+    )
+
+    # Plot main line
+    ax.plot(az_rad, horizon_vals, lw=2.1, color=cmr.pride([0.21]), alpha=0.9, zorder=2)
+
+    # Configure polar orientation
+    ax.set_theta_zero_location("N")  # type: ignore[attr-defined]
+    ax.set_theta_direction(-1)  # type: ignore[attr-defined]
+
+    # Draw compass-style radial ticks
+    major_deg = np.arange(0, 360, 30)
+    minor_deg = np.arange(0, 360, 2)
+
+    for deg in minor_deg:
+        theta = np.deg2rad(deg)
+        ax.plot(
+            [theta, theta],
+            [rmax + pad - 1, rmax + pad],
+            color="gray",
+            lw=1.2,
+            alpha=0.6,
+            solid_capstyle="butt",
+            zorder=2,
+        )
+
+    for deg in major_deg:
+        theta = np.deg2rad(deg)
+        ax.plot(
+            [theta, theta],
+            [rmax + pad - 2, rmax + pad],
+            color=cmr.pride([0.79]),
+            lw=2.5,
+            alpha=0.8,
+            solid_capstyle="butt",
+            zorder=3,
+        )
+
+    # Set limits first
+    ax.set_rlim(rmin - 10, rmax + pad)  # type: ignore[attr-defined]
+    ax.set_rlabel_position(150)  # type: ignore[attr-defined]
+    ax.tick_params(axis="y", labelsize=10)
+
+    # Now re-query rmin/rmax to get the final values
+    rmin = ax.get_rmin()  # type: ignore[attr-defined]
+    rmax = ax.get_rmax()  # type: ignore[attr-defined]
+    label_radius = rmin + 0.9 * (rmax - rmin)
+
+    # Then place the cardinal direction labels
+    for deg, label in {0: "N", 90: "E", 180: "S", 270: "W"}.items():
+        ax.text(
+            np.deg2rad(deg),
+            label_radius,
+            label,
+            ha="center",
+            va="center",
+            fontsize=15,
+            fontstyle="italic",
+        )
+
+    # Set limits, label settings
+    ax.set_rlabel_position(150)  # type: ignore[attr-defined]
+    ax.tick_params(axis="y", labelsize=10)
+
+    # Hide default angular labels
+    ax.set_xticklabels([])
+
+    # Grid aesthetics
+    ax.grid(ls=":", lw=0.5)
 
     return ax
