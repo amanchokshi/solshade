@@ -241,6 +241,42 @@ def plot_hillshade_cmd(
             plt.show()  # pragma: no cover
 
 
+# @plot_app.command("horizon")
+# def plot_horizon_cmd(
+#     horizon_path: Path = typer.Argument(..., help="Path to HORIZON_*.tif GeoTIFF."),
+#     lat: float = typer.Option(..., help="Latitude of point of interest."),
+#     lon: float = typer.Option(..., help="Longitude of point of interest."),
+#     output_dir: Optional[Path] = typer.Option(None, help="Directory to save polar plot."),
+# ):
+#     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif."""
+#
+#     # horizon_da = rxr.open_rasterio(horizon_path, masked=True).squeeze("band", drop=True)
+#     horizon_da = load_dem(horizon_path)
+#     transformer = Transformer.from_crs("EPSG:4326", horizon_da.rio.crs, always_xy=True)
+#     x, y = transformer.transform(lon, lat)
+#
+#     transform = horizon_da.rio.transform()
+#     row, col = rowcol(transform, x, y)
+#     azimuths = np.linspace(0, 360, horizon_da.shape[0], endpoint=False)
+#     azimuths = np.asarray(json.loads(horizon_da.attrs["azimuths_deg"]))
+#     profile = horizon_da[:, row, col].values
+#
+#     _, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6, 5))
+#     plot_horizon_polar(azimuths, profile, ax)
+#     ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
+#
+#     if output_dir:
+#         output_dir.mkdir(parents=True, exist_ok=True)
+#         out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
+#         plt.tight_layout()
+#         plt.savefig(out_path)
+#         typer.echo(f"Saved horizon polar plot to {out_path}")
+#     else:
+#         plt.tight_layout()
+#         if not os.getenv("SOLSHADE_TEST_MODE"):
+#             plt.show()  # pragma: no cover
+
+
 @plot_app.command("horizon")
 def plot_horizon_cmd(
     horizon_path: Path = typer.Argument(..., help="Path to HORIZON_*.tif GeoTIFF."),
@@ -250,14 +286,28 @@ def plot_horizon_cmd(
 ):
     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif."""
 
-    # horizon_da = rxr.open_rasterio(horizon_path, masked=True).squeeze("band", drop=True)
     horizon_da = load_dem(horizon_path)
     transformer = Transformer.from_crs("EPSG:4326", horizon_da.rio.crs, always_xy=True)
     x, y = transformer.transform(lon, lat)
 
+    # Determine pixel location
     transform = horizon_da.rio.transform()
     row, col = rowcol(transform, x, y)
-    azimuths = np.linspace(0, 360, horizon_da.shape[0], endpoint=False)
+
+    ny, nx = horizon_da.shape[1], horizon_da.shape[2]
+    if not (0 <= row < ny and 0 <= col < nx):
+        # Compute geographic bounds for clearer error message
+        left, bottom, right, top = horizon_da.rio.bounds()
+        reverse_transformer = Transformer.from_crs(horizon_da.rio.crs, "EPSG:4326", always_xy=True)
+        lon_min, lat_min = reverse_transformer.transform(left, bottom)
+        lon_max, lat_max = reverse_transformer.transform(right, top)
+
+        raise typer.BadParameter(
+            f"LAT/LON ({lat:.6f}, {lon:.6f}) falls outside the raster bounds.\n"
+            f"Valid LAT range: [{lat_min:.6f}, {lat_max:.6f}]\n"
+            f"Valid LON range: [{lon_min:.6f}, {lon_max:.6f}]"
+        )
+
     azimuths = np.asarray(json.loads(horizon_da.attrs["azimuths_deg"]))
     profile = horizon_da[:, row, col].values
 
@@ -265,14 +315,13 @@ def plot_horizon_cmd(
     plot_horizon_polar(azimuths, profile, ax)
     ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
 
+    plt.tight_layout()
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
         out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
-        plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved horizon polar plot to {out_path}")
     else:
-        plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
             plt.show()  # pragma: no cover
 

@@ -9,10 +9,11 @@ import numpy as np
 import pytest
 import xarray as xr
 from affine import Affine
-from pyproj import CRS
+from pyproj import CRS, Transformer
+from rasterio.transform import from_origin
 from typer.testing import CliRunner
 
-from solshade.cli import app, plot_app
+from solshade.cli import app
 
 runner = CliRunner()
 
@@ -163,73 +164,77 @@ def test_attribute_truncation():
 
 
 @pytest.fixture
-def dummy_horizon_geotiff(tmp_path):
-    """Create a temporary dummy HORIZON_*.tif file with metadata."""
-    azimuths = np.linspace(0, 360, 64, endpoint=False)
-    ny, nx = 5, 5
-    data = np.random.uniform(0, 30, size=(len(azimuths), ny, nx))
+def mock_horizon_file(tmp_path):
+    ny, nx = 50, 50
+    n_directions = 360
+    transform = from_origin(-1000000, 1000000, 2000, 2000)
+    crs = CRS.from_epsg(3413)
 
-    # Create DataArray
+    data = np.random.uniform(0, 20, size=(n_directions, ny, nx)).astype(np.float32)
+    azimuths = np.linspace(0, 360, n_directions, endpoint=False)
+
     da = xr.DataArray(
         data,
         dims=("band", "y", "x"),
-        coords={"band": np.arange(len(azimuths)), "y": np.arange(ny), "x": np.arange(nx)},
-        name="horizon",
+        coords={
+            "band": np.arange(1, n_directions + 1),
+            "x": np.arange(nx) * transform.a + transform.c,
+            "y": np.arange(ny) * transform.e + transform.f,
+        },
+        attrs={
+            "azimuths_deg": json.dumps(azimuths.tolist()),
+        },
     )
 
-    # Set CRS and transform
-    transform = Affine.translation(0, 0) * Affine.scale(1, -1)  # dummy geotransform
-    da.rio.write_crs("EPSG:4326", inplace=True)
+    da.rio.write_crs(crs, inplace=True)
     da.rio.write_transform(transform, inplace=True)
 
-    # Store azimuth metadata
-    da.attrs["azimuths_deg"] = json.dumps(azimuths.tolist())
-
-    out_path = tmp_path / "HORIZON_dummy.tif"
-    da.rio.to_raster(out_path)
-
-    return out_path
+    tif_path = tmp_path / "HORIZON_TEST.tif"
+    da.rio.to_raster(tif_path)
+    return tif_path
 
 
-def test_plot_horizon_cmd_saves_plot(dummy_horizon_geotiff, tmp_path, monkeypatch):
-    """Test that the command saves a polar plot to the output directory."""
-    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+def test_plot_horizon_cmd_within_bounds(mock_horizon_file, tmp_path):
+    # Match the mock raster's transform
+    center_x = -1_000_000 + 2000 * 25
+    center_y = 1_000_000 - 2000 * 25
 
-    result = runner.invoke(
-        plot_app,
-        [
-            "horizon",
-            str(dummy_horizon_geotiff),
-            "--lat",
-            "0.0",
-            "--lon",
-            "0.0",
-            "--output-dir",
-            str(tmp_path),
-        ],
-    )
-
-    assert result.exit_code == 0
-    files = list(tmp_path.glob("*.png"))
-    assert len(files) == 1
-    assert files[0].name.startswith("HORIZON_dummy")
-    assert files[0].suffix == ".png"
-
-
-def test_plot_horizon_cmd_show(monkeypatch, dummy_horizon_geotiff):
-    """Test that the command completes when output_dir is not specified."""
-    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+    transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
+    lon, lat = transformer.transform(center_x, center_y)
 
     result = runner.invoke(
-        plot_app,
-        [
-            "horizon",
-            str(dummy_horizon_geotiff),
-            "--lat",
-            "0.0",
-            "--lon",
-            "0.0",
-        ],
+        app,
+        ["plot", "horizon", "--lat", str(lat), "--lon", str(lon), str(mock_horizon_file), "--output-dir", str(tmp_path)],
     )
-
     assert result.exit_code == 0
+    assert "Saved horizon polar plot" in result.stdout
+
+
+def test_plot_horizon_cmd_out_of_bounds(mock_horizon_file):
+    result = runner.invoke(app, ["plot", "horizon", "--lat", "20.0", "--lon", "20.0", str(mock_horizon_file)])
+    assert result.exit_code != 0
+
+
+def test_plot_horizon_cmd_show(monkeypatch, mock_horizon_file):
+    """Test that plot_horizon_cmd triggers plt.show() when SOLSHADE_TEST_MODE is not set."""
+    from unittest.mock import patch
+
+    from rasterio.transform import from_origin
+
+    # Use center pixel and reverse transform to get in-bounds lat/lon
+    transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
+    center_x, center_y = transform * (25, 25)
+    reverse_transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
+    lon, lat = reverse_transformer.transform(center_x, center_y)
+
+    # Ensure SOLSHADE_TEST_MODE is not set
+    monkeypatch.delenv("SOLSHADE_TEST_MODE", raising=False)
+
+    with patch("matplotlib.pyplot.show") as mock_show:
+        result = runner.invoke(
+            app,
+            ["plot", "horizon", "--lat", str(lat), "--lon", str(lon), str(mock_horizon_file)],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        mock_show.assert_called_once()
