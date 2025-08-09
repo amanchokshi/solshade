@@ -202,3 +202,101 @@ def test_plot_horizon_cmd_show(monkeypatch, mock_horizon_file):
         )
         assert result.exit_code == 0, result.stderr
         mock_show.assert_called_once()
+
+
+def test_plot_horizon_cmd_with_solar_overlay(monkeypatch, mock_horizon_file, tmp_path):
+    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+
+    # stub compute_solar_altaz
+    def _fake_compute(lat, lon, startutc=None, stoputc=None, timestep=3600, cache_dir=None):
+        n = 24
+        times = np.array([np.datetime64("2025-01-01T00:00") + np.timedelta64(i, "h") for i in range(n)])
+        alt = np.linspace(5.0, 25.0, n)
+        az = (np.linspace(0, 360, n, endpoint=False) + 7.0) % 360.0
+        assert startutc is None or startutc.tzinfo is not None
+        assert stoputc is None or stoputc.tzinfo is not None
+        return times, alt, az
+
+    def _fake_envelope(times_utc, alt_deg, az_deg, smooth_n=360):
+        az_plot = np.array([0, 90, 180, 270, 360], dtype=float)
+        min_plot = np.array([0, 5, 10, 5, 0], dtype=float)
+        max_plot = np.array([10, 15, 20, 15, 10], dtype=float)
+        return az_plot, min_plot, max_plot
+
+    from rasterio.transform import from_origin
+
+    import solshade.cli as cli_mod
+    import solshade.solar as solar_mod
+
+    monkeypatch.setattr(cli_mod, "compute_solar_altaz", _fake_compute, raising=True)
+    monkeypatch.setattr(solar_mod, "solar_envelope_by_folding", _fake_envelope, raising=True)
+
+    # Compute an in-bounds lat/lon at the raster center
+    transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
+    center_x, center_y = transform * (25, 25)  # center of 50x50
+    reverse_transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
+    lon, lat = reverse_transformer.transform(center_x, center_y)
+
+    outdir = tmp_path / "plots"
+    args = [
+        "plot",
+        "horizon",
+        "--lat",
+        str(lat),
+        "--lon",
+        str(lon),
+        str(mock_horizon_file),
+        "--solar",
+        "--startutc",
+        "2025-01-01T00:00:00Z",
+        "--stoputc",
+        "2025-01-02T00:00:00Z",
+        "--timestep",
+        "3600",
+        "--output-dir",
+        str(outdir),
+    ]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    saved = list(outdir.glob("*_SOLAR_*.png"))
+    assert len(saved) == 1
+
+
+def test_plot_horizon_cmd_with_naive_startutc(monkeypatch, mock_horizon_file, tmp_path):
+    # Stub out heavy functions
+    monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
+    import solshade.cli as cli_mod
+    import solshade.solar as solar_mod
+
+    monkeypatch.setattr(cli_mod, "compute_solar_altaz", lambda *a, **k: (np.array([]), np.array([]), np.array([])))
+    monkeypatch.setattr(solar_mod, "solar_envelope_by_folding", lambda *a, **k: (np.array([]), np.array([]), np.array([])))
+
+    # In-bounds lat/lon
+    from pyproj import Transformer
+    from rasterio.transform import from_origin
+
+    transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
+    center_x, center_y = transform * (25, 25)
+    lon, lat = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True).transform(center_x, center_y)
+
+    outdir = tmp_path / "plots"
+    args = [
+        "plot",
+        "horizon",
+        "--lat",
+        str(lat),
+        "--lon",
+        str(lon),
+        str(mock_horizon_file),
+        "--solar",
+        "--startutc",
+        "2025-01-01T00:00:00",  # no timezone -> triggers tz attach
+        "--stoputc",
+        "2025-01-01T01:00:00",  # no timezone
+        "--timestep",
+        "3600",
+        "--output-dir",
+        str(outdir),
+    ]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0
