@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import numpy as np
+from scipy.interpolate import CubicSpline
 from skyfield.api import Loader, wgs84
 from skyfield.timelib import Timescale
 
@@ -12,15 +13,15 @@ EarthSegment = object
 
 
 def load_sun_ephemeris(
-    cache_dir: Optional[Path] = None,
+    cache_dir: Optional[Union[str, Path]] = "data/skyfield",
 ) -> Tuple[SunSegment, EarthSegment, Timescale]:
     """
     Load the Sun and Earth ephemeris segments from the DE440s file and a Timescale.
 
     Parameters
     ----------
-    cache_dir : Path, optional
-        Directory for Skyfield's cache. If None, uses Skyfield’s default (~/.skyfield).
+    cache_dir : str or Path, optional
+        Directory for ephemeris and timescale cache. Defaults to ./data/skyfield.
 
     Returns
     -------
@@ -43,15 +44,16 @@ def load_sun_ephemeris(
       or manually place 'de440s.bsp' and timescale data in the cache_dir.
     """
     eph_name = "de440s.bsp"
-    loader = Loader(str(cache_dir)) if cache_dir else Loader(None)
+    cache_root = Path(cache_dir) if cache_dir is not None else Path("data/skyfield")
+    cache_root.mkdir(parents=True, exist_ok=True)
+    loader = Loader(str(cache_root))
 
     # Load timescale
     try:
         ts = loader.timescale()
     except Exception as exc:
-        where = f"cache_dir={cache_dir}" if cache_dir else "~/.skyfield"
         raise FileNotFoundError(
-            f"Timescale data not found in Skyfield cache ({where}).\n"
+            f"Timescale data not found in Skyfield cache ({cache_root}).\n"
             f"Run once with internet or manually copy the required files."
         ) from exc
 
@@ -59,9 +61,8 @@ def load_sun_ephemeris(
     try:
         ephem = loader(eph_name)
     except Exception as exc:
-        where = f"cache_dir={cache_dir}" if cache_dir else "~/.skyfield"
         raise FileNotFoundError(
-            f"Ephemeris '{eph_name}' not found in Skyfield cache ({where}).\n"
+            f"Ephemeris '{eph_name}' not found in Skyfield cache ({cache_root}).\n"
             f"Run once with internet or manually copy the BSP file."
         ) from exc
 
@@ -76,7 +77,7 @@ def compute_solar_altaz(
     startutc: Optional[datetime] = None,
     stoputc: Optional[datetime] = None,
     timestep: int = 3600,
-    cache_dir: Optional[Path] = None,
+    cache_dir: Optional[Union[str, Path]] = "data/skyfield",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the Sun’s altitude and azimuth over a specified time range at a given location.
@@ -99,9 +100,8 @@ def compute_solar_altaz(
         If naive (no timezone), assumed to be UTC.
     timestep : int, default=3600
         Time step between calculations, in seconds. Must be positive.
-    cache_dir : Path, optional
-        Directory for Skyfield’s cache. If ``None``, Skyfield’s default cache directory
-        (``~/.skyfield``) is used.
+    cache_dir : str or Path, optional
+        Directory for ephemeris and timescale cache. Defaults to ./data/skyfield.
 
     Returns
     -------
@@ -150,7 +150,7 @@ def compute_solar_altaz(
     times_py = [start_dt + timedelta(seconds=int(s)) for s in offsets]  # tz-aware UTC
     times_utc = np.array([t.replace(tzinfo=None) for t in times_py], dtype="datetime64[ns]")
 
-    # Skyfield computation (match frames: Earth + topocentric observer, observing Sun)
+    # Skyfield computation (Earth + topocentric observer, observing Sun)
     sun, earth, ts = load_sun_ephemeris(cache_dir)
     t = ts.from_datetimes(times_py)  # expects tz-aware datetimes
 
@@ -162,3 +162,124 @@ def compute_solar_altaz(
     az_deg = np.asarray(np.mod(az.degrees, 360.0))
 
     return times_utc, alt_deg, az_deg
+
+
+def solar_envelope_by_folding(
+    times_utc: np.ndarray,
+    alt_deg: np.ndarray,
+    az_deg: np.ndarray,
+    smooth_n: int = 360,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build daily solar envelopes (min/max altitude vs azimuth) by folding a
+    uniformly sampled time series into UTC slots and taking per-slot extrema.
+
+    Parameters
+    ----------
+    times_utc : np.ndarray of datetime64[*]
+        UTC timestamps at uniform cadence covering >= 1 full day. Any datetime64
+        unit is accepted and internally normalized to seconds.
+    alt_deg : np.ndarray, shape (N,)
+        Solar altitude samples in degrees.
+    az_deg : np.ndarray, shape (N,)
+        Solar azimuth samples in degrees. Values are wrapped to [0, 360).
+    smooth_n : int, default=360
+        Number of equally spaced azimuth points (degrees) for the smoothed
+        envelope. Must be >= 4.
+
+    Returns
+    -------
+    az_plot : np.ndarray, shape (smooth_n+1,)
+        Azimuth grid in degrees, wrapped to include 360 for closed plotting.
+    alt_min_plot : np.ndarray, shape (smooth_n+1,)
+        Smoothed minimum-altitude envelope at az_plot.
+    alt_max_plot : np.ndarray, shape (smooth_n+1,)
+        Smoothed maximum-altitude envelope at az_plot.
+
+    Raises
+    ------
+    ValueError
+        - Non-1D or mismatched input lengths
+        - Non-uniform sampling cadence, or cadence that doesn't divide 86400 s
+        - Not enough samples for one full day
+        - <4 unique azimuth samples for cubic spline
+    """
+    # ---- basic checks ----
+    if alt_deg.shape != az_deg.shape:
+        raise ValueError("alt_deg and az_deg must have the same shape.")
+    if alt_deg.ndim != 1:
+        raise ValueError("alt_deg and az_deg must be 1-D arrays.")
+    if times_utc.shape[0] != alt_deg.shape[0]:
+        raise ValueError("times_utc, alt_deg, az_deg lengths must match.")
+
+    n = alt_deg.size
+    if n < 2:
+        raise ValueError("Need at least two samples to infer cadence.")
+
+    # ---- infer cadence from times_utc ----
+    t_sec = times_utc.astype("datetime64[s]")
+    diffs = np.diff(t_sec.astype("int64"))  # seconds between samples
+    step_s = int(diffs[0])
+    if step_s <= 0:
+        raise ValueError("Non-positive timestep inferred from times_utc.")
+    if not np.all(diffs == step_s):
+        raise ValueError("times_utc must be uniformly sampled.")
+    if 86400 % step_s != 0:
+        raise ValueError(f"Inferred cadence {step_s}s does not divide 86400s.")
+
+    slots_per_day = 86400 // step_s
+
+    # ---- truncate to whole days and reshape ----
+    n_complete = (n // slots_per_day) * slots_per_day
+    if n_complete == 0:
+        raise ValueError("Not enough samples for a single complete day.")
+
+    alt = np.asarray(alt_deg[:n_complete], dtype=float)
+    az = np.mod(np.asarray(az_deg[:n_complete], dtype=float), 360.0)
+
+    n_days = n_complete // slots_per_day
+    alt_2d = alt.reshape(n_days, slots_per_day)
+    az_2d = az.reshape(n_days, slots_per_day)
+
+    # ---- per-slot extrema (vectorized) ----
+    cols = np.arange(slots_per_day)
+    idx_min = np.argmin(alt_2d, axis=0)
+    idx_max = np.argmax(alt_2d, axis=0)
+
+    slot_min_alt = alt_2d[idx_min, cols]
+    slot_min_az = az_2d[idx_min, cols]
+    slot_max_alt = alt_2d[idx_max, cols]
+    slot_max_az = az_2d[idx_max, cols]
+
+    # ---- periodic cubic spline fit ----
+    if smooth_n < 4:
+        raise ValueError("smooth_n must be >= 4 for cubic spline fitting.")
+
+    az_smooth = np.linspace(0.0, 360.0, smooth_n, endpoint=False)
+
+    def _periodic_cubic(az_in: np.ndarray, alt_in: np.ndarray) -> np.ndarray:
+        order = np.argsort(az_in)
+        x = az_in[order]
+        y = alt_in[order]
+
+        xu, idx = np.unique(x, return_index=True)
+        yu = y[idx]
+        if xu.size < 4:
+            raise ValueError("Not enough unique azimuth samples for cubic spline.")
+
+        # wrap endpoint to enforce periodic continuity
+        xw = np.concatenate([xu, [xu[0] + 360.0]])
+        yw = np.concatenate([yu, [yu[0]]])
+
+        cs = CubicSpline(xw, yw, bc_type="periodic")
+        return cs(az_smooth)
+
+    min_alt_smooth = _periodic_cubic(slot_min_az, slot_min_alt)
+    max_alt_smooth = _periodic_cubic(slot_max_az, slot_max_alt)
+
+    # ---- close the curves for continuous plotting ----
+    az_plot = np.append(az_smooth, 360.0)
+    alt_min_plot = np.append(min_alt_smooth, min_alt_smooth[0])
+    alt_max_plot = np.append(max_alt_smooth, max_alt_smooth[0])
+
+    return az_plot, alt_min_plot, alt_max_plot

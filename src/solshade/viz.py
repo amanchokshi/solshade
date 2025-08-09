@@ -172,76 +172,161 @@ def plot_hillshade(
 def plot_horizon_polar(
     azimuths: np.ndarray,
     horizon_vals: np.ndarray,
-    ax: Optional[Axes] = None,
-) -> Axes:
+    ax: Optional["Axes"] = None,
+    *,
+    sunaz: Optional[np.ndarray] = None,
+    sunaltmin: Optional[np.ndarray] = None,
+    sunaltmax: Optional[np.ndarray] = None,
+) -> "Axes":
     """
-    Plot a stylized polar horizon profile with compass-style ticks and shading.
+    Plot a stylized polar horizon profile with compass-style ticks and (optionally)
+    a solar envelope (min/max altitude versus azimuth).
 
     Parameters
     ----------
     azimuths : array-like
         Azimuth angles in degrees (clockwise from North).
     horizon_vals : array-like
-        Horizon elevation values (in degrees).
+        Horizon elevation values in degrees.
     ax : matplotlib.axes.PolarAxes, optional
         Polar axis to plot on. If None, a new one is created.
+    sunaz : array-like, optional
+        Solar azimuth samples in degrees (same length as sunaltmin/sunaltmax).
+    sunaltmin : array-like, optional
+        Minimum solar altitude per azimuth (degrees).
+    sunaltmax : array-like, optional
+        Maximum solar altitude per azimuth (degrees).
 
     Returns
     -------
     ax : matplotlib.axes.PolarAxes
-        The axis with the plotted horizon profile.
+        The axis with the plotted horizon profile (and optional solar envelope).
     """
+    import cmasher as cmr
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     if ax is None:
         _, ax = plt.subplots(subplot_kw={"projection": "polar"})
 
-    # Close the curve
-    az_rad = np.deg2rad(np.append(azimuths, azimuths[0]))
-    horizon_vals = np.append(horizon_vals, horizon_vals[0])
+    # ---- Horizon curve (closed) ----
+    az = np.asarray(azimuths, float)
+    hr = np.asarray(horizon_vals, float)
 
-    rmax = np.nanmax(horizon_vals)
-    rmin = np.nanmin(horizon_vals)
-    pad = 5
+    az_rad = np.deg2rad(np.append(az, az[0]))
+    hr_closed = np.append(hr, hr[0])
 
-    # Fill under the curve (with color and hatch)
+    horizon_edge = cmr.pride([0.21])
+    horizon_fill = cmr.pride([0.30])
+
     ax.fill(
         az_rad,
-        horizon_vals,
-        facecolor=cmr.pride([0.3]),
-        edgecolor=cmr.pride([0.21]),
+        hr_closed,
+        facecolor=horizon_fill,
+        alpha=0.4,
         hatch="/////",
+        edgecolor=horizon_edge,
         linewidth=0,
-        alpha=0.21,
         zorder=1,
     )
+    ax.plot(az_rad, hr_closed, lw=2.1, color=horizon_edge, alpha=0.9, zorder=2)
 
-    # Plot main line
-    ax.plot(az_rad, horizon_vals, lw=2.1, color=cmr.pride([0.21]), alpha=0.9, zorder=2)
+    # ---- Optional solar envelope ----
+    have_sun = sunaz is not None and (sunaltmin is not None or sunaltmax is not None)
 
-    # Configure polar orientation
+    solar_lo = None
+    solar_hi = None
+    solar_th = None
+
+    if have_sun:
+        saz = np.mod(np.asarray(sunaz, float), 360.0)
+
+        lo = np.asarray(sunaltmin, float) if sunaltmin is not None else None
+        hi = np.asarray(sunaltmax, float) if sunaltmax is not None else None
+
+        # Mask NaNs consistently
+        mask = np.isfinite(saz)
+        if lo is not None:
+            mask &= np.isfinite(lo)
+        if hi is not None:
+            mask &= np.isfinite(hi)
+
+        saz = saz[mask]
+        if lo is not None:
+            lo = lo[mask]
+        if hi is not None:
+            hi = hi[mask]
+
+        if saz.size:
+            # Sort by azimuth to keep the band well-behaved
+            order = np.argsort(saz)
+            saz = saz[order]
+            if lo is not None:
+                lo = lo[order]
+            if hi is not None:
+                hi = hi[order]
+
+            solar_th = np.deg2rad(saz)
+
+            solar_color = cmr.pride([0.68])
+
+            if lo is not None and hi is not None:
+                # Fill envelope between min and max
+                # Build a closed polygon in theta–r space
+                th_poly = np.concatenate([solar_th, solar_th[::-1]])
+                r_poly = np.concatenate([lo, hi[::-1]])
+                ax.fill(
+                    th_poly,
+                    r_poly,
+                    facecolor=cmr.pride([0.6]),
+                    alpha=0.1,
+                    hatch="\\\\\\\\\\",
+                    edgecolor=cmr.pride([0.6]),
+                    linewidth=0,
+                    zorder=0,
+                )
+                # Outline top/bottom
+                ax.plot(solar_th, lo, color=solar_color, lw=2.1, ls=":", alpha=0.9, zorder=0)
+                ax.plot(solar_th, hi, color=solar_color, lw=2.1, alpha=0.9, zorder=0)
+                solar_lo, solar_hi = lo, hi
+            elif lo is not None:
+                ax.plot(solar_th, lo, color=solar_color, lw=1.5, alpha=0.9, zorder=0)
+                solar_lo = lo
+            elif hi is not None:
+                ax.plot(solar_th, hi, color=solar_color, lw=1.5, alpha=0.9, zorder=0)
+                solar_hi = hi
+
+    # ---- Orientation ----
     ax.set_theta_zero_location("N")  # type: ignore[attr-defined]
     ax.set_theta_direction(-1)  # type: ignore[attr-defined]
 
-    # Draw compass-style radial ticks
+    # ---- Radial limits: include horizon and any solar curves ----
+    pad = 5.0
+    r_candidates = [np.nanmin(hr_closed), np.nanmax(hr_closed)]
+    if have_sun and solar_th is not None:
+        if solar_lo is not None:
+            r_candidates.extend([np.nanmin(solar_lo), np.nanmax(solar_lo)])
+        if solar_hi is not None:
+            r_candidates.extend([np.nanmin(solar_hi), np.nanmax(solar_hi)])
+
+    rmin = float(np.nanmin(r_candidates))
+    rmax = float(np.nanmax(r_candidates))
+    ax.set_rlim(rmin - 10.0, rmax + pad)  # type: ignore[attr-defined]
+    ax.set_rlabel_position(150)  # type: ignore[attr-defined]
+    ax.tick_params(axis="y", labelsize=10)
+
+    # ---- Rim ticks ----
     major_deg = np.arange(0, 360, 30)
     minor_deg = np.arange(0, 360, 2)
 
     for deg in minor_deg:
-        theta = np.deg2rad(deg)
-        ax.plot(
-            [theta, theta],
-            [rmax + pad - 1, rmax + pad],
-            color="gray",
-            lw=1.2,
-            alpha=0.6,
-            solid_capstyle="butt",
-            zorder=2,
-        )
-
+        th = np.deg2rad(deg)
+        ax.plot([th, th], [rmax + pad - 1.0, rmax + pad], color="gray", lw=1.2, alpha=0.6, solid_capstyle="butt", zorder=2)
     for deg in major_deg:
-        theta = np.deg2rad(deg)
+        th = np.deg2rad(deg)
         ax.plot(
-            [theta, theta],
-            [rmax + pad - 2, rmax + pad],
+            [th, th],
+            [rmax + pad - 2.0, rmax + pad],
             color=cmr.pride([0.79]),
             lw=2.5,
             alpha=0.8,
@@ -249,36 +334,15 @@ def plot_horizon_polar(
             zorder=3,
         )
 
-    # Set limits first
-    ax.set_rlim(rmin - 10, rmax + pad)  # type: ignore[attr-defined]
-    ax.set_rlabel_position(150)  # type: ignore[attr-defined]
-    ax.tick_params(axis="y", labelsize=10)
+    # ---- Cardinal labels at fixed fraction of radius (no jitter) ----
+    rmin_f = ax.get_rmin()  # type: ignore[attr-defined]
+    rmax_f = ax.get_rmax()  # type: ignore[attr-defined]
+    label_r = rmin_f + 0.90 * (rmax_f - rmin_f)
 
-    # Now re-query rmin/rmax to get the final values
-    rmin = ax.get_rmin()  # type: ignore[attr-defined]
-    rmax = ax.get_rmax()  # type: ignore[attr-defined]
-    label_radius = rmin + 0.9 * (rmax - rmin)
-
-    # Then place the cardinal direction labels
     for deg, label in {0: "N", 90: "E", 180: "S", 270: "W"}.items():
-        ax.text(
-            np.deg2rad(deg),
-            label_radius,
-            label,
-            ha="center",
-            va="center",
-            fontsize=15,
-            fontstyle="italic",
-        )
+        ax.text(np.deg2rad(deg), label_r, label, ha="center", va="center", fontsize=15, fontstyle="italic")
 
-    # Set limits, label settings
-    ax.set_rlabel_position(150)  # type: ignore[attr-defined]
-    ax.tick_params(axis="y", labelsize=10)
-
-    # Hide default angular labels
-    ax.set_xticklabels([])
-
-    # Grid aesthetics
-    ax.grid(ls=":", lw=0.5)
+    ax.set_xticklabels([])  # hide default angle numbers
+    ax.grid(ls=":", lw=0.7, zorder=7)
 
     return ax

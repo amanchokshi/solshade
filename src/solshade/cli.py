@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,7 @@ from rasterio.transform import Affine, rowcol
 from rich.console import Console
 from rich.markup import escape
 
+from solshade.solar import compute_solar_altaz
 from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, load_dem
 from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_slope
 
@@ -239,45 +241,90 @@ def plot_hillshade_cmd(
 @plot_app.command("horizon")
 def plot_horizon_cmd(
     horizon_path: Path = typer.Argument(..., help="Path to HORIZON_*.tif GeoTIFF."),
-    lat: float = typer.Option(..., help="Latitude of point of interest."),
-    lon: float = typer.Option(..., help="Longitude of point of interest."),
+    lat: float = typer.Option(..., help="Latitude of point of interest (degrees, +N)."),
+    lon: float = typer.Option(..., help="Longitude of point of interest (degrees, +E)."),
     output_dir: Optional[Path] = typer.Option(None, help="Directory to save polar plot."),
+    # New options:
+    solar: bool = typer.Option(False, help="Overlay solar envelope (min/max altitude)."),
+    startutc: Optional[str] = typer.Option(None, help="ISO UTC start time, e.g. '2025-01-01T00:00:00Z'."),
+    stoputc: Optional[str] = typer.Option(None, help="ISO UTC stop time, e.g. '2026-01-01T00:00:00Z'."),
+    timestep: int = typer.Option(3600, help="Sampling step (seconds) for solar calculation."),
+    cache_dir: Optional[Path] = typer.Option(None, help="Skyfield cache directory (defaults to ./data/skyfield)."),
 ):
-    """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif."""
+    """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif.
+    Optionally overlay a solar altitude envelope computed from Skyfield.
+    """
+
+    from solshade.solar import solar_envelope_by_folding  # assumes you've added this
+    from solshade.terrain import load_dem
+
+    def _parse_iso_utc(s: str) -> datetime:
+        # Accept '...Z' or timezone-aware/naive; normalize to UTC
+        iso = s.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
 
     horizon_da = load_dem(horizon_path)
+
+    # Reproject the query lon/lat into the raster CRS and find its pixel
     transformer = Transformer.from_crs("EPSG:4326", horizon_da.rio.crs, always_xy=True)
     x, y = transformer.transform(lon, lat)
 
-    # Determine pixel location
     transform = horizon_da.rio.transform()
     row, col = rowcol(transform, x, y)
 
     ny, nx = horizon_da.shape[1], horizon_da.shape[2]
     if not (0 <= row < ny and 0 <= col < nx):
-        # Compute geographic bounds for clearer error message
+        # Build friendly bounds in geographic coords
         left, bottom, right, top = horizon_da.rio.bounds()
         reverse_transformer = Transformer.from_crs(horizon_da.rio.crs, "EPSG:4326", always_xy=True)
         lon_min, lat_min = reverse_transformer.transform(left, bottom)
         lon_max, lat_max = reverse_transformer.transform(right, top)
-
         raise typer.BadParameter(
             f"LAT/LON ({lat:.6f}, {lon:.6f}) falls outside the raster bounds.\n"
             f"Valid LAT range: [{lat_min:.6f}, {lat_max:.6f}]\n"
             f"Valid LON range: [{lon_min:.6f}, {lon_max:.6f}]"
         )
 
+    # Read azimuth axis and the horizon profile at the target pixel
     azimuths = np.asarray(json.loads(horizon_da.attrs["azimuths_deg"]))
     profile = horizon_da[:, row, col].values
 
+    # Make the plot
     _, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6, 5))
-    plot_horizon_polar(azimuths, profile, ax)
+
+    # Optional solar overlay (envelope)
+    sun_kwargs = {}
+    if solar:
+        # Times: use defaults if not supplied (your compute_solar_altaz handles defaults)
+        start_dt = _parse_iso_utc(startutc) if startutc else None
+        stop_dt = _parse_iso_utc(stoputc) if stoputc else None
+
+        times_utc, alt_deg, az_deg = compute_solar_altaz(
+            lat=lat, lon=lon, startutc=start_dt, stoputc=stop_dt, timestep=timestep, cache_dir=(cache_dir or "data/skyfield")
+        )
+
+        # Build smooth solar envelope (min/max altitude vs azimuth)
+        az_smooth, min_alt_smooth, max_alt_smooth = solar_envelope_by_folding(times_utc, alt_deg, az_deg, smooth_n=360)
+
+        sun_kwargs = {
+            "sunaz": az_smooth,
+            "sunaltmin": min_alt_smooth,
+            "sunaltmax": max_alt_smooth,
+        }
+
+    plot_horizon_polar(azimuths, profile, ax, **sun_kwargs)
     ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
 
     plt.tight_layout()
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
+        if solar:
+            out_path = output_dir / f"{horizon_path.stem}_SOLAR_{lat:.8f}_{lon:.8f}.png"
+        else:
+            out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
         plt.savefig(out_path)
         typer.echo(f"Saved horizon polar plot to {out_path}")
     else:
