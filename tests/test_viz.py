@@ -8,14 +8,8 @@ from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.projections.polar import PolarAxes
 
-from solshade.terrain import compute_slope_aspect
-from solshade.viz import (
-    plot_aspect,
-    plot_dem,
-    plot_hillshade,
-    plot_horizon_polar,
-    plot_slope,
-)
+from solshade.terrain import compute_slope_aspect_normals
+from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_normals, plot_slope
 
 # -----------------------------------------------------------------------------
 # Test helpers / fixtures
@@ -47,7 +41,7 @@ def _simple_horizon(n: int = 36):
 
 
 # -----------------------------------------------------------------------------
-# DEM / slope / aspect / hillshade map plotting
+# DEM / slope / aspect / normals / hillshade map plotting
 # -----------------------------------------------------------------------------
 
 
@@ -59,7 +53,7 @@ def _simple_horizon(n: int = 36):
             lambda: (
                 "slope",
                 plot_slope,
-                compute_slope_aspect(_make_dem(values=np.tile(np.arange(10), (10, 1))))[0],
+                compute_slope_aspect_normals(_make_dem(values=np.tile(np.arange(10), (10, 1))))[0],
             ),
             "Slope",
         ),
@@ -67,9 +61,17 @@ def _simple_horizon(n: int = 36):
             lambda: (
                 "aspect",
                 plot_aspect,
-                compute_slope_aspect(_make_dem(values=np.tile(np.arange(10), (10, 1))))[1],
+                compute_slope_aspect_normals(_make_dem(values=np.tile(np.arange(10), (10, 1))))[1],
             ),
             "Aspect",
+        ),
+        (
+            lambda: (
+                "normal",
+                plot_normals,
+                compute_slope_aspect_normals(_make_dem(values=np.tile(np.arange(10), (10, 1))))[1],
+            ),
+            "Normals: R->E, G->N, B->U",
         ),
     ],
 )
@@ -82,7 +84,7 @@ def test_basic_map_plots(builder, title_match):
 
 def test_plot_hillshade():
     dem = _make_dem(values=np.tile(np.arange(10), (10, 1)))
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     ax = plot_hillshade(slope, aspect, azimuth_deg=270, altitude_deg=30)
     assert isinstance(ax.figure, Figure)
     assert "Hillshade" in ax.get_title()

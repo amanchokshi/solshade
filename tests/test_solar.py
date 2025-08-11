@@ -109,7 +109,7 @@ def test_compute_solar_altaz_shapes_and_wrapping(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
 
-    times, alt, az = solar.compute_solar_altaz(10.0, 20.0, startutc=start, stoputc=stop, timestep=timestep)
+    times, alt, az, _ = solar.compute_solar_altaz(10.0, 20.0, startutc=start, stoputc=stop, timestep=timestep)
 
     assert times.dtype.kind == "M" and str(times.dtype) == "datetime64[ns]"
     assert len(times) == 4
@@ -131,8 +131,8 @@ def test_compute_solar_altaz_naive_vs_aware(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
 
-    t_n, alt_n, az_n = solar.compute_solar_altaz(10.0, 20.0, start_naive, stop_naive, 3600)
-    t_a, alt_a, az_a = solar.compute_solar_altaz(10.0, 20.0, start_aware, stop_aware, 3600)
+    t_n, alt_n, az_n, _ = solar.compute_solar_altaz(10.0, 20.0, start_naive, stop_naive, 3600)
+    t_a, alt_a, az_a, _ = solar.compute_solar_altaz(10.0, 20.0, start_aware, stop_aware, 3600)
 
     np.testing.assert_array_equal(t_n, t_a)
     np.testing.assert_allclose(alt_n, alt_a)
@@ -155,6 +155,66 @@ def test_compute_solar_altaz_stop_before_start(monkeypatch: pytest.MonkeyPatch):
     stop = start - timedelta(hours=1)
     with pytest.raises(ValueError):
         solar.compute_solar_altaz(0.0, 0.0, startutc=start, stoputc=stop, timestep=3600)
+
+
+def test_compute_solar_enu_matches_trig(monkeypatch: pytest.MonkeyPatch):
+    """ENU unit vectors must match the direct trig from (alt, az)."""
+    # Choose some varied alt/az (include negatives/large az for wrapping)
+    alt_arr = np.array([0.0, 10.0, 30.0, 60.0, -5.0])
+    az_arr = np.array([0.0, 45.0, 200.0, 359.0, 370.0])  # last two test wrapping
+
+    # Patch Skyfield usage
+    monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
+    monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
+
+    # 4 samples -> use a tiny window (inclusive endpoints)
+    start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    stop = start + timedelta(hours=4)
+    times, alt, az, enu = solar.compute_solar_altaz(10.0, 20.0, startutc=start, stoputc=stop, timestep=3600)
+
+    # Sanity: we got as many rows as alt/az
+    assert enu.shape == (alt_arr.size, 3)
+
+    # Expected ENU from trig
+    alt_r = np.deg2rad(alt)
+    az_r = np.deg2rad(az)  # already wrapped in the function
+    e_exp = np.cos(alt_r) * np.sin(az_r)
+    n_exp = np.cos(alt_r) * np.cos(az_r)
+    u_exp = np.sin(alt_r)
+    enu_exp = np.stack([e_exp, n_exp, u_exp], axis=1)
+
+    np.testing.assert_allclose(enu, enu_exp, rtol=1e-12, atol=1e-12)
+
+    # Each row should be ~unit length
+    norms = np.linalg.norm(enu, axis=1)
+    assert np.allclose(norms, 1.0, rtol=1e-12, atol=1e-12)
+
+
+def test_compute_solar_enu_cardinals_and_zenith(monkeypatch: pytest.MonkeyPatch):
+    """Check a few crisp cases: horizon north/east and zenith."""
+    # Cases:
+    # 1) alt=0, az=0   -> (E,N,U) = (0, 1, 0)  (north on horizon)
+    # 2) alt=0, az=90  -> (1, 0, 0)           (east on horizon)
+    # 3) alt=90, any az -> (0,0,1)            (straight up)
+    alt_arr = np.array([0.0, 0.0, 90.0])
+    az_arr = np.array([0.0, 90.0, 123.0])  # azimuth irrelevant for alt=90
+
+    monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
+    monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
+
+    start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    stop = start + timedelta(hours=2)
+    _, alt, az, enu = solar.compute_solar_altaz(51.5, -0.1, startutc=start, stoputc=stop, timestep=3600)
+
+    # North on horizon
+    np.testing.assert_allclose(enu[0], np.array([0.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12)
+    # East on horizon
+    np.testing.assert_allclose(enu[1], np.array([1.0, 0.0, 0.0]), rtol=1e-12, atol=1e-12)
+    # Zenith
+    np.testing.assert_allclose(enu[2], np.array([0.0, 0.0, 1.0]), rtol=1e-12, atol=1e-12)
+
+    # Also confirm norms are unity
+    assert np.allclose(np.linalg.norm(enu, axis=1), 1.0, rtol=1e-12, atol=1e-12)
 
 
 # -------------------------------
@@ -465,3 +525,112 @@ def test_envelope_rejects_non_positive_timestep():
     az = np.array([0.0, 10.0])
     with pytest.raises(ValueError, match="Non-positive timestep"):
         solar.solar_envelope_by_folding(times, alt, az, smooth_n=120)
+
+
+# -------------------------------
+# nearest_horizon_indices tests
+# -------------------------------
+
+
+def _linspace_horizon(n):
+    return np.linspace(0.0, 360.0, n, endpoint=False)
+
+
+def test_exact_matches_small_grid():
+    n = 8
+    horizon = _linspace_horizon(n)  # [0,45,90,...,315]
+    idx = solar.nearest_horizon_indices(horizon, horizon)
+    np.testing.assert_array_equal(idx, np.arange(n))
+
+
+def test_wrap_around_and_negatives():
+    n = 8
+    step = 360.0 / n  # 45
+    horizon = _linspace_horizon(n)
+
+    sun = np.array(
+        [
+            -0.1,  # wraps to 359.9 -> nearest is 0°
+            0.0,  # exact 0°
+            0.1,  # close to 0°
+            359.9,  # close to 360 -> 0°
+            44.9,  # close to 45 -> idx 1
+            45.1,  # just over 45 -> idx 1
+            720.0 + 10.0,  # large positive wraps to 10 -> idx 0
+            -720.0 - 50.0,  # large negative wraps to 310 -> idx 7
+        ]
+    )
+
+    got = solar.nearest_horizon_indices(sun, horizon)
+
+    # Expected via simple reasoning / manual binning
+    expected = np.array(
+        [
+            0,  # -0.1 -> 359.9 -> nearest 0
+            0,  # 0
+            0,  # 0.1
+            0,  # 359.9
+            1,  # 44.9
+            1,  # 45.1
+            int(np.rint((10.0) / step)) % n,  # 10 -> 0
+            int(np.rint((310.0) / step)) % n,  # 310 -> 7
+        ]
+    )
+
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_mid_bin_rounding_avoids_tie_behavior():
+    # We avoid exact .5-step midpoints because np.rint uses bankers' rounding.
+    n = 8
+    step = 360.0 / n  # 45
+    horizon = _linspace_horizon(n)
+
+    # Just below and just above midpoints between bins
+    sun = np.array(
+        [
+            step / 2 - 0.01,  # ~22.49 -> nearest 0
+            step / 2 + 0.01,  # ~22.51 -> nearest 1
+            step + step / 2 - 0.01,  # ~67.49 -> nearest 1
+            step + step / 2 + 0.01,  # ~67.51 -> nearest 2
+        ]
+    )
+    got = solar.nearest_horizon_indices(sun, horizon)
+    expected = np.array([0, 1, 1, 2])
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_returns_int_indices_and_shape():
+    n = 16
+    horizon = _linspace_horizon(n)
+    sun = np.linspace(-1000, 1000, 123)  # arbitrary shape/values
+    idx = solar.nearest_horizon_indices(sun, horizon)
+    assert idx.shape == sun.shape
+    assert np.issubdtype(idx.dtype, np.integer)
+    assert np.all((idx >= 0) & (idx < n))
+
+
+def test_bruteforce_correctness_random():
+    rng = np.random.default_rng(0)
+    n = 64
+    horizon = _linspace_horizon(n)
+    sun = rng.uniform(-720.0, 720.0, size=1000)
+
+    got = solar.nearest_horizon_indices(sun, horizon)
+
+    # Brute force: pick horizon az that minimizes circular distance
+    sun_w = np.mod(sun, 360.0)[:, None]  # (M,1)
+    h = horizon[None, :]  # (1,N)
+    d = np.abs(sun_w - h)
+    circ_d = np.minimum(d, 360.0 - d)  # (M,N)
+    expect = np.argmin(circ_d, axis=1)
+
+    np.testing.assert_array_equal(got, expect)
+
+
+@pytest.mark.parametrize("n", [4, 6, 12, 360])
+def test_various_grid_sizes(n):
+    horizon = _linspace_horizon(n)
+    # Sun exactly on each horizon azimuth should map to its own index
+    got = solar.nearest_horizon_indices(horizon, horizon)
+    np.testing.assert_array_equal(got, np.arange(n))

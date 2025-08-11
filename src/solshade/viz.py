@@ -128,6 +128,35 @@ def plot_aspect(aspect: xr.DataArray, ax: Axes | None = None) -> Axes:
     return ax
 
 
+def plot_normals(normals_enu: xr.DataArray, ax: Axes | None = None) -> Axes:
+    """
+    Plot rgb normals unit vector map.
+
+    Parameters
+    ----------
+    normal_enu : xarray.DataArray (3, y, x)
+        ENU unit normal vectors. Bands: [east, north, up].
+    ax : matplotlib.axes.Axes, optional
+        Optional Matplotlib axis to plot on. If None, a new figure and axis are created.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+        The axis containing the aspect plot.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    extent = _get_extent(normals_enu)
+    rgb = (normals_enu.values + 1) / 2
+    rgb = np.moveaxis(rgb, 0, -1)
+    ax.imshow(rgb, extent=extent, origin="upper")
+    ax.set_title("Normals: R->E, G->N, B->U")
+    ax.set_xlabel("Easting (m)")
+    ax.set_ylabel("Northing (m)")
+    return ax
+
+
 def plot_hillshade(
     slope: xr.DataArray,
     aspect: xr.DataArray,

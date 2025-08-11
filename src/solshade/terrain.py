@@ -51,41 +51,36 @@ def load_dem(path: str | Path) -> xr.DataArray:
     return squeezed
 
 
-def compute_slope_aspect(dem: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
+def compute_slope_aspect_normals(
+    dem: xr.DataArray,
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
     """
-    Compute terrain slope and aspect from a 2D DEM.
+    Compute slope, aspect, and ENU unit normal vectors from a DEM.
 
-    Uses the central difference method via numpy.gradient.
-    Assumes a projected CRS (e.g., UTM, polar stereographic) where
-    spatial resolution is in meters or equivalent linear units.
+    Slope and aspect follow GIS conventions:
+    - Slope: angle from horizontal (0° flat, 90° vertical).
+    - Aspect: compass direction of steepest descent, clockwise from North (0°=N, 90°=E).
 
     Parameters
     ----------
     dem : xarray.DataArray
-        2D elevation array with dimensions (y, x), coordinates, and valid CRS.
+        2D DEM with projected CRS and linear units (e.g., meters).
 
     Returns
     -------
-    slope : xarray.DataArray
-        Slope in degrees, where 0° is flat and 90° is vertical.
-        Same shape and coordinates as input DEM.
-
-    aspect : xarray.DataArray
+    slope : xarray.DataArray (y, x)
+        Slope in degrees.
+    aspect : xarray.DataArray (y, x)
         Aspect in degrees clockwise from North.
-        0° = North, 90° = East, 180° = South, 270° = West.
-        Flat regions may contain undefined or noisy aspect values.
-
-    Raises
-    ------
-    ValueError
-        If spatial resolution cannot be determined from the DEM.
+    normal_enu : xarray.DataArray (3, y, x)
+        ENU unit normal vectors. Bands: [east, north, up].
 
     Notes
     -----
-    - Aspect is computed using arctangent of partial derivatives:
-        arctan2(-dz/dx, dz/dy)
-    - The output arrays include metadata: "units" and "long_name".
-    - Edge pixels may be less accurate due to gradient estimation.
+    Normal vector components:
+        E = sin(slope) * sin(aspect)
+        N = sin(slope) * cos(aspect)
+        U = cos(slope)
     """
     z = dem.values
     dy, dx = dem.rio.resolution()
@@ -100,11 +95,43 @@ def compute_slope_aspect(dem: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]
     aspect_rad = np.arctan2(-dzdx, dzdy)
     aspect_deg = (np.degrees(aspect_rad) + 360) % 360
 
-    slope = xr.DataArray(slope_deg, coords=dem.coords, dims=dem.dims, attrs={"units": "degrees", "long_name": "slope"})
+    slope = xr.DataArray(
+        slope_deg,
+        coords=dem.coords,
+        dims=dem.dims,
+        attrs={"units": "degrees", "long_name": "slope"},
+    )
 
-    aspect = xr.DataArray(aspect_deg, coords=dem.coords, dims=dem.dims, attrs={"units": "degrees", "long_name": "aspect"})
+    aspect = xr.DataArray(
+        aspect_deg,
+        coords=dem.coords,
+        dims=dem.dims,
+        attrs={"units": "degrees", "long_name": "aspect"},
+    )
 
-    return slope, aspect
+    # Convert to radians
+    slope_r = np.deg2rad(slope_deg)
+    aspect_r = np.deg2rad(aspect_deg)
+
+    # ENU normal components
+    east = np.sin(slope_r) * np.sin(aspect_r)
+    north = np.sin(slope_r) * np.cos(aspect_r)
+    up = np.cos(slope_r)
+
+    normal_vec = np.stack([east, north, up], axis=0)  # (3, y, x)
+
+    # Normalize
+    norms = np.linalg.norm(normal_vec, axis=0, keepdims=True)
+    normal_vec = np.divide(normal_vec, norms, out=np.zeros_like(normal_vec), where=norms > 0)
+
+    normal_enu = xr.DataArray(
+        normal_vec,
+        coords={"band": ["east", "north", "up"], dem.dims[0]: dem[dem.dims[0]], dem.dims[1]: dem[dem.dims[1]]},
+        dims=("band", *dem.dims),
+        attrs={"description": "Terrain normal unit vector in ENU coordinates"},
+    )
+
+    return slope, aspect, normal_enu
 
 
 def compute_hillshade(
@@ -156,7 +183,7 @@ def compute_hillshade(
 
 def compute_horizon_map(
     dem: xr.DataArray,
-    n_directions: int = 64,
+    n_directions: int = 360,
     max_distance: float = 5000,
     step: float = 20,
     chunk_size: int = 32,

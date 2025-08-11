@@ -213,9 +213,10 @@ def test_plot_horizon_cmd_with_solar_overlay(monkeypatch, mock_horizon_file, tmp
         times = np.array([np.datetime64("2025-01-01T00:00") + np.timedelta64(i, "h") for i in range(n)])
         alt = np.linspace(5.0, 25.0, n)
         az = (np.linspace(0, 360, n, endpoint=False) + 7.0) % 360.0
+        enu_unit = np.zeros((az.size, 3))
         assert startutc is None or startutc.tzinfo is not None
         assert stoputc is None or stoputc.tzinfo is not None
-        return times, alt, az
+        return times, alt, az, enu_unit
 
     def _fake_envelope(times_utc, alt_deg, az_deg, smooth_n=360):
         az_plot = np.array([0, 90, 180, 270, 360], dtype=float)
@@ -268,7 +269,9 @@ def test_plot_horizon_cmd_with_naive_startutc(monkeypatch, mock_horizon_file, tm
     import solshade.cli as cli_mod
     import solshade.solar as solar_mod
 
-    monkeypatch.setattr(cli_mod, "compute_solar_altaz", lambda *a, **k: (np.array([]), np.array([]), np.array([])))
+    monkeypatch.setattr(
+        cli_mod, "compute_solar_altaz", lambda *a, **k: (np.array([]), np.array([]), np.array([]), np.array([]))
+    )
     monkeypatch.setattr(solar_mod, "solar_envelope_by_folding", lambda *a, **k: (np.array([]), np.array([]), np.array([])))
 
     # In-bounds lat/lon
@@ -300,3 +303,44 @@ def test_plot_horizon_cmd_with_naive_startutc(monkeypatch, mock_horizon_file, tm
     ]
     result = runner.invoke(app, args)
     assert result.exit_code == 0
+
+
+def test_compute_normals_subcommand():
+    """`solshade compute normals` writes a 3-band GeoTIFF of ENU normals."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outdir = Path(tmpdir)
+        result = subprocess.run(
+            ["solshade", "compute", "normals", str(TEST_DATA), "--output-dir", str(outdir)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"compute normals failed: {result.stderr}"
+        expected = outdir / (TEST_DATA.stem + "_NORMALS.tif")
+        assert expected.exists(), f"{expected} was not created"
+
+
+def test_plot_normals_subcommand_saves_png():
+    """`solshade plot normals --output-dir` saves an RGB visual of ENU normals."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outdir = Path(tmpdir)
+        result = subprocess.run(
+            ["solshade", "plot", "normals", str(TEST_DATA), "--output-dir", str(outdir)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"plot normals failed: {result.stderr}"
+        expected = outdir / (TEST_DATA.stem + "_NORMALS.png")
+        assert expected.exists(), f"{expected} was not created"
+
+
+def test_plot_normals_subcommand_show_mode():
+    """`solshade plot normals` without --output-dir runs in show mode; use test flag to avoid GUI."""
+    env = os.environ.copy()
+    env["SOLSHADE_TEST_MODE"] = "1"  # prevent plt.show()
+    result = subprocess.run(
+        ["solshade", "plot", "normals", str(TEST_DATA)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, f"plot normals show-mode failed: {result.stderr}"

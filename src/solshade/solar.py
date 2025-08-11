@@ -78,54 +78,60 @@ def compute_solar_altaz(
     stoputc: Optional[datetime] = None,
     timestep: int = 3600,
     cache_dir: Optional[Union[str, Path]] = "data/skyfield",
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute the Sun’s altitude and azimuth over a specified time range at a given location.
+    Compute the Sun’s apparent altitude/azimuth and the **unit ENU direction vector**
+    over a time range at a given site.
 
-    This function uses Skyfield to compute the apparent altitude and azimuth of the Sun
-    at regular time intervals between ``startutc`` and ``stoputc`` for a given geographic
-    latitude and longitude.
+    The ENU vector is derived *directly* from the local topocentric (alt, az) returned
+    by Skyfield—avoiding intermediate ECEF rotations and their numerical pitfalls.
 
     Parameters
     ----------
     lat : float
-        Geographic latitude in degrees (positive north).
+        Geographic latitude in degrees (+N).
     lon : float
-        Geographic longitude in degrees (positive east).
+        Geographic longitude in degrees (+E).
     startutc : datetime, optional
-        UTC start time for calculations. If ``None``, defaults to current UTC time.
-        If naive (no timezone), assumed to be UTC.
+        UTC start time. If None, uses current UTC. If naive, assumed UTC.
     stoputc : datetime, optional
-        UTC stop time for calculations. If ``None``, defaults to one year after ``startutc``.
-        If naive (no timezone), assumed to be UTC.
+        UTC stop time. If None, defaults to one year after ``startutc``.
+        Must be strictly after ``startutc``. If naive, assumed UTC.
     timestep : int, default=3600
-        Time step between calculations, in seconds. Must be positive.
+        Sampling step in seconds. Must be > 0.
     cache_dir : str or Path, optional
-        Directory for ephemeris and timescale cache. Defaults to ./data/skyfield.
+        Skyfield cache directory (timescale + DE440s kernel). Default: ``./data/skyfield``.
 
     Returns
     -------
-    times_utc : numpy.ndarray of datetime64[ns]
-        Array of UTC timestamps corresponding to each calculation time step.
-    alt_deg : numpy.ndarray of float
-        Apparent altitude of the Sun in degrees, same length as ``times_utc``.
-        Positive values indicate the Sun is above the horizon.
-    az_deg : numpy.ndarray of float
-        Apparent azimuth of the Sun in degrees, same length as ``times_utc``.
-        Measured clockwise from true north (0° = North, 90° = East).
+    times_utc : ndarray of datetime64[ns], shape (N,)
+        UTC timestamps for each sample.
+    alt_deg : ndarray of float, shape (N,)
+        Apparent altitude (degrees). No atmospheric refraction applied.
+    az_deg : ndarray of float, shape (N,)
+        Apparent azimuth (degrees), clockwise from true north, wrapped to [0, 360).
+    enu_unit : ndarray of float, shape (N, 3)
+        Unit vectors pointing from the site toward the Sun in local ENU coordinates
+        (columns: E, N, U). Each row has norm ~= 1.
 
     Raises
     ------
     ValueError
-        If ``timestep`` is not positive or if ``stoputc`` is before or equal to ``startutc``.
+        If ``timestep`` <= 0 or if ``stoputc`` <= ``startutc``.
     FileNotFoundError
-        If required Skyfield ephemeris or timescale files are missing from the cache.
+        If Skyfield cache files (timescale or ephemeris) are missing.
 
     Notes
     -----
     - Uses the compact DE440s kernel.
-    - Alt/Az are computed from apparent positions (light-time delay, aberration) with
-      **no** atmospheric refraction applied.
+    - Apparent alt/az include light-time/aberration, **no refraction**.
+    - ENU unit vector is computed via:
+
+          E = cos(alt) * sin(az)
+          N = cos(alt) * cos(az)
+          U = sin(alt)
+
+      where azimuth is CW from north (Skyfield’s default for topocentric alt/az).
     """
 
     def ensure_utc(dt: datetime) -> datetime:
@@ -133,35 +139,50 @@ def compute_solar_altaz(
             return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
 
+    # ---- Time range & validation ----
     now_utc = datetime.now(timezone.utc)
     start_dt = ensure_utc(startutc) if startutc else now_utc
-    stop_dt = ensure_utc(stoputc) if stoputc else (now_utc + timedelta(days=365))
+    stop_dt = ensure_utc(stoputc) if stoputc else (start_dt + timedelta(days=365))
 
     if timestep <= 0:
         raise ValueError("timestep must be a positive number of seconds")
     if stop_dt <= start_dt:
         raise ValueError("stoputc must be after startutc")
 
-    # Build time vector (tz-aware list for Skyfield; tz-naive numpy array for return)
+    # Build time vector for Skyfield (aware) and for return (datetime64[ns])
     total_seconds = int((stop_dt - start_dt).total_seconds())
     steps = total_seconds // timestep
     offsets = np.arange(0, steps * timestep + 1, timestep, dtype="int64")
 
-    times_py = [start_dt + timedelta(seconds=int(s)) for s in offsets]  # tz-aware UTC
+    times_py = [start_dt + timedelta(seconds=int(s)) for s in offsets]  # tz-aware
     times_utc = np.array([t.replace(tzinfo=None) for t in times_py], dtype="datetime64[ns]")
 
-    # Skyfield computation (Earth + topocentric observer, observing Sun)
+    # ---- Skyfield apparent topocentric alt/az ----
     sun, earth, ts = load_sun_ephemeris(cache_dir)
-    t = ts.from_datetimes(times_py)  # expects tz-aware datetimes
+    t = ts.from_datetimes(times_py)
 
     observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
-    astrometric = (earth + observer).at(t).observe(sun).apparent()  # type: ignore
-    alt, az, _ = astrometric.altaz()
+    apparent = (earth + observer).at(t).observe(sun).apparent()  # type: ignore
+    alt, az, _ = apparent.altaz()
 
-    alt_deg = np.asarray(alt.degrees)
-    az_deg = np.asarray(np.mod(az.degrees, 360.0))
+    alt_deg = np.asarray(alt.degrees, dtype=float)
+    az_deg = np.asarray(np.mod(az.degrees, 360.0), dtype=float)
 
-    return times_utc, alt_deg, az_deg
+    # ---- Direct ENU unit vector from (alt, az) ----
+    alt_rad = np.deg2rad(alt_deg)
+    az_rad = np.deg2rad(az_deg)
+
+    c_alt = np.cos(alt_rad)
+    enu_unit = np.stack(
+        (
+            c_alt * np.sin(az_rad),  # E
+            c_alt * np.cos(az_rad),  # N
+            np.sin(alt_rad),  # U
+        ),
+        axis=1,
+    ).astype(float)
+
+    return times_utc, alt_deg, az_deg, enu_unit
 
 
 def solar_envelope_by_folding(
@@ -283,3 +304,30 @@ def solar_envelope_by_folding(
     alt_max_plot = np.append(max_alt_smooth, max_alt_smooth[0])
 
     return az_plot, alt_min_plot, alt_max_plot
+
+
+def nearest_horizon_indices(
+    sun_az_deg: np.ndarray,
+    horizon_az_deg: np.ndarray,
+) -> np.ndarray:
+    """
+    Map each solar azimuth to the nearest horizon azimuth index.
+
+    Parameters
+    ----------
+    sun_az_deg : np.ndarray, shape (M,)
+        Solar azimuths in degrees (any real values). Wrapped to [0, 360).
+    horizon_az_deg : np.ndarray, shape (N,)
+        Uniformly spaced horizon azimuths in degrees over [0, 360).
+        Typically from ``np.linspace(0, 360, n_directions, endpoint=False)``.
+
+    Returns
+    -------
+    idx : np.ndarray, shape (M,)
+        Indices into ``horizon_az_deg`` of the nearest azimuth for each sun azimuth.
+    """
+    n = horizon_az_deg.size
+    step = 360.0 / n
+    sun_wrapped = np.mod(sun_az_deg, 360.0)
+    idx = np.rint(sun_wrapped / step).astype(int) % n
+    return idx

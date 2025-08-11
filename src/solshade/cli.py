@@ -14,8 +14,8 @@ from rich.console import Console
 from rich.markup import escape
 
 from solshade.solar import compute_solar_altaz
-from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, load_dem
-from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_slope
+from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, load_dem
+from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_normals, plot_slope
 
 console = Console()
 app = typer.Typer(help="Terrain-aware solar illumination modeling using DEMs and orbital solar geometry.")
@@ -77,14 +77,14 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         console.print(f"\t[white]{str(k).upper()}: {escape(str(pretty))}[/white]")
 
 
-compute_app = typer.Typer(help="Compute slope, aspect, hillshade or horizon maps from DEMs.")
+compute_app = typer.Typer(help="Compute slope, aspect, normals, hillshade or horizon maps from DEMs.")
 app.add_typer(compute_app, name="compute")
 
 
 @compute_app.command("slope")
 def compute_slope_cmd(dem_path: Path, output_dir: Optional[Path] = None):
     dem = load_dem(dem_path)
-    slope_da, _ = compute_slope_aspect(dem)
+    slope_da, _, _ = compute_slope_aspect_normals(dem)
     out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_SLOPE.tif"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     slope_da.rio.to_raster(out_path)
@@ -94,10 +94,20 @@ def compute_slope_cmd(dem_path: Path, output_dir: Optional[Path] = None):
 @compute_app.command("aspect")
 def compute_aspect_cmd(dem_path: Path, output_dir: Optional[Path] = None):
     dem = load_dem(dem_path)
-    _, aspect_da = compute_slope_aspect(dem)
+    _, aspect_da, _ = compute_slope_aspect_normals(dem)
     out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_ASPECT.tif"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     aspect_da.rio.to_raster(out_path)
+    typer.echo(f"Saved aspect to {out_path}")
+
+
+@compute_app.command("normals")
+def compute_normal_cmd(dem_path: Path, output_dir: Optional[Path] = None):
+    dem = load_dem(dem_path)
+    _, _, normal = compute_slope_aspect_normals(dem)
+    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_NORMALS.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    normal.rio.to_raster(out_path)
     typer.echo(f"Saved aspect to {out_path}")
 
 
@@ -109,7 +119,7 @@ def compute_hillshade_cmd(
     output_dir: Optional[Path] = None,
 ):
     dem = load_dem(dem_path)
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     hillshade_da = compute_hillshade(slope, aspect, azimuth, altitude)
     out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +130,7 @@ def compute_hillshade_cmd(
 @compute_app.command("horizon")
 def compute_horizon_cmd(
     dem_path: Path,
-    n_directions: int = 64,
+    n_directions: int = 360,
     max_distance: float = 5000,
     step: float = 20,
     chunk_size: int = 32,
@@ -177,7 +187,7 @@ def plot_slope_cmd(
 ):
     """Plot the slope derived from a DEM."""
     dem = load_dem(dem_path)
-    slope, _ = compute_slope_aspect(dem)
+    slope, _, _ = compute_slope_aspect_normals(dem)
     _, ax = plt.subplots(figsize=(7, 5))
     ax = plot_slope(slope, ax)
     if output_dir:
@@ -199,12 +209,34 @@ def plot_aspect_cmd(
 ):
     """Plot the aspect derived from a DEM."""
     dem = load_dem(dem_path)
-    _, aspect = compute_slope_aspect(dem)
+    _, aspect, _ = compute_slope_aspect_normals(dem)
     _, ax = plt.subplots(figsize=(7, 5))
     ax = plot_aspect(aspect, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
         out_path = output_dir / (dem_path.stem + "_ASPECT.png")
+        plt.tight_layout()
+        plt.savefig(out_path)
+        typer.echo(f"Saved aspect plot to {out_path}")
+    else:
+        plt.tight_layout()
+        if not os.getenv("SOLSHADE_TEST_MODE"):
+            plt.show()  # pragma: no cover
+
+
+@plot_app.command("normals")
+def plot_normals_cmd(
+    dem_path: Path,
+    output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+):
+    """Plot rgb map of enu normals derived from a DEM."""
+    dem = load_dem(dem_path)
+    _, _, normals = compute_slope_aspect_normals(dem)
+    _, ax = plt.subplots(figsize=(7, 5))
+    ax = plot_normals(normals, ax)
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / (dem_path.stem + "_NORMALS.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved aspect plot to {out_path}")
@@ -223,7 +255,7 @@ def plot_hillshade_cmd(
 ):
     """Plot hillshade from a DEM using specified illumination angles."""
     dem = load_dem(dem_path)
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     _, ax = plt.subplots(figsize=(7, 5))
     ax = plot_hillshade(slope, aspect, azimuth, altitude, ax)
     if output_dir:
@@ -302,7 +334,7 @@ def plot_horizon_cmd(
         start_dt = _parse_iso_utc(startutc) if startutc else None
         stop_dt = _parse_iso_utc(stoputc) if stoputc else None
 
-        times_utc, alt_deg, az_deg = compute_solar_altaz(
+        times_utc, alt_deg, az_deg, _ = compute_solar_altaz(
             lat=lat, lon=lon, startutc=start_dt, stoputc=stop_dt, timestep=timestep, cache_dir=(cache_dir or "data/skyfield")
         )
 

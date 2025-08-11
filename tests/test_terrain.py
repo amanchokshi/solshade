@@ -20,7 +20,7 @@ import xarray as xr
 from affine import Affine
 from rasterio.crs import CRS
 
-from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect, horizon_interp, load_dem
+from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, horizon_interp, load_dem
 
 # -------------------------
 # Elevation functions
@@ -88,30 +88,112 @@ def test_load_dem_raises_type_error():
             load_dem("dummy/path.tif")
 
 
-# -------------------------
-# Slope & aspect tests
-# -------------------------
+# ------------------------------
+# Slope, aspect & normals tests
+# ------------------------------
 
 
 def test_flat_dem():
     dem = create_mock_dem()
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     assert np.allclose(slope.values, 0)
     assert np.isnan(aspect.values).all() or np.allclose(aspect.values, 0)
 
 
 def test_linear_slope_east():
     dem = create_mock_dem(elevation_func=slope_east)
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     assert np.allclose(slope.values, slope.values[0, 0])
     assert np.allclose(aspect.values, 270)
 
 
 def test_linear_slope_north():
     dem = create_mock_dem(elevation_func=slope_north)
-    slope, aspect = compute_slope_aspect(dem)
+    slope, aspect, _ = compute_slope_aspect_normals(dem)
     assert np.allclose(slope.values, slope.values[0, 0])
     assert np.allclose(aspect.values, 0)
+
+
+def _assert_unit_normals(normal_enu: xr.DataArray, atol=1e-6):
+    # (3, y, x) → Euclidean norm per pixel over band axis
+    vec = normal_enu.values  # shape (3, y, x)
+    norms = np.linalg.norm(vec, axis=0)
+    assert np.allclose(norms, 1.0, atol=atol)
+
+
+def test_normals_flat_dem_are_up_only():
+    dem = create_mock_dem((12, 12), elevation_func=flat_elevation)
+    slope, aspect, normal = compute_slope_aspect_normals(dem)
+
+    # Bands and dims
+    assert normal.dims == ("band", "y", "x")
+    assert list(normal.coords["band"].values) == ["east", "north", "up"]
+    assert normal.shape == (3, *dem.shape)
+
+    # For a flat surface: E=N=0, U=1
+    e = normal.sel(band="east").values
+    n = normal.sel(band="north").values
+    u = normal.sel(band="up").values
+    assert np.allclose(e, 0.0, atol=1e-12)
+    assert np.allclose(n, 0.0, atol=1e-12)
+    assert np.allclose(u, 1.0, atol=1e-12)
+
+    _assert_unit_normals(normal)
+
+
+def test_normals_match_formula_for_linear_slope_east():
+    """For a plane increasing with +x, verify normal = [sin(s)*sin(a), sin(s)*cos(a), cos(s)]."""
+    dem = create_mock_dem((20, 20), elevation_func=slope_east)
+    slope, aspect, normal = compute_slope_aspect_normals(dem)
+
+    s_r = np.deg2rad(slope.values)
+    a_r = np.deg2rad(aspect.values)
+
+    e_expect = np.sin(s_r) * np.sin(a_r)
+    n_expect = np.sin(s_r) * np.cos(a_r)
+    u_expect = np.cos(s_r)
+
+    np.testing.assert_allclose(normal.sel(band="east").values, e_expect, atol=1e-10, rtol=0)
+    np.testing.assert_allclose(normal.sel(band="north").values, n_expect, atol=1e-10, rtol=0)
+    np.testing.assert_allclose(normal.sel(band="up").values, u_expect, atol=1e-10, rtol=0)
+
+    _assert_unit_normals(normal)
+
+
+def test_normals_match_formula_for_linear_slope_north():
+    """For a plane increasing with +y, verify normal components against the formula."""
+    dem = create_mock_dem((20, 20), elevation_func=slope_north)
+    slope, aspect, normal = compute_slope_aspect_normals(dem)
+
+    s_r = np.deg2rad(slope.values)
+    a_r = np.deg2rad(aspect.values)
+
+    e_expect = np.sin(s_r) * np.sin(a_r)
+    n_expect = np.sin(s_r) * np.cos(a_r)
+    u_expect = np.cos(s_r)
+
+    np.testing.assert_allclose(normal.sel(band="east").values, e_expect, atol=1e-10, rtol=0)
+    np.testing.assert_allclose(normal.sel(band="north").values, n_expect, atol=1e-10, rtol=0)
+    np.testing.assert_allclose(normal.sel(band="up").values, u_expect, atol=1e-10, rtol=0)
+
+    _assert_unit_normals(normal)
+
+
+def test_normals_values_are_finite_and_bounded():
+    """Smoke check: normals are finite and within [-1, 1] for a random DEM."""
+    rng = np.random.default_rng(0)
+
+    def rand_elev(y, x):
+        return rng.normal(0, 1, size=x.shape)
+
+    dem = create_mock_dem((24, 24), elevation_func=rand_elev)
+    _, _, normal = compute_slope_aspect_normals(dem)
+
+    v = normal.values
+    assert np.isfinite(v).all()
+    assert (v >= -1.0 - 1e-9).all() and (v <= 1.0 + 1e-9).all()
+
+    _assert_unit_normals(normal)
 
 
 # -------------------------
