@@ -207,16 +207,17 @@ def test_plot_horizon_cmd_show(monkeypatch, mock_horizon_file):
 def test_plot_horizon_cmd_with_solar_overlay(monkeypatch, mock_horizon_file, tmp_path):
     monkeypatch.setenv("SOLSHADE_TEST_MODE", "1")
 
-    # stub compute_solar_altaz
+    # stub compute_solar_ephem
     def _fake_compute(lat, lon, startutc=None, stoputc=None, timestep=3600, cache_dir=None):
         n = 24
         times = np.array([np.datetime64("2025-01-01T00:00") + np.timedelta64(i, "h") for i in range(n)])
         alt = np.linspace(5.0, 25.0, n)
         az = (np.linspace(0, 360, n, endpoint=False) + 7.0) % 360.0
+        dist_au = np.zeros(az.size)
         enu_unit = np.zeros((az.size, 3))
         assert startutc is None or startutc.tzinfo is not None
         assert stoputc is None or stoputc.tzinfo is not None
-        return times, alt, az, enu_unit
+        return times, alt, az, dist_au, enu_unit
 
     def _fake_envelope(times_utc, alt_deg, az_deg, smooth_n=360):
         az_plot = np.array([0, 90, 180, 270, 360], dtype=float)
@@ -229,7 +230,7 @@ def test_plot_horizon_cmd_with_solar_overlay(monkeypatch, mock_horizon_file, tmp
     import solshade.cli as cli_mod
     import solshade.solar as solar_mod
 
-    monkeypatch.setattr(cli_mod, "compute_solar_altaz", _fake_compute, raising=True)
+    monkeypatch.setattr(cli_mod, "compute_solar_ephem", _fake_compute, raising=True)
     monkeypatch.setattr(solar_mod, "solar_envelope_by_folding", _fake_envelope, raising=True)
 
     # Compute an in-bounds lat/lon at the raster center
@@ -270,7 +271,7 @@ def test_plot_horizon_cmd_with_naive_startutc(monkeypatch, mock_horizon_file, tm
     import solshade.solar as solar_mod
 
     monkeypatch.setattr(
-        cli_mod, "compute_solar_altaz", lambda *a, **k: (np.array([]), np.array([]), np.array([]), np.array([]))
+        cli_mod, "compute_solar_ephem", lambda *a, **k: (np.array([]), np.array([]), np.array([]), np.array([]), np.array([]))
     )
     monkeypatch.setattr(solar_mod, "solar_envelope_by_folding", lambda *a, **k: (np.array([]), np.array([]), np.array([])))
 

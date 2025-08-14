@@ -13,7 +13,7 @@ from rasterio.transform import Affine, rowcol
 from rich.console import Console
 from rich.markup import escape
 
-from solshade.solar import compute_solar_altaz
+from solshade.solar import compute_solar_ephem
 from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, load_dem
 from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_normals, plot_slope
 
@@ -334,7 +334,7 @@ def plot_horizon_cmd(
         start_dt = _parse_iso_utc(startutc) if startutc else None
         stop_dt = _parse_iso_utc(stoputc) if stoputc else None
 
-        times_utc, alt_deg, az_deg, _ = compute_solar_altaz(
+        times_utc, alt_deg, az_deg, _, _ = compute_solar_ephem(
             lat=lat, lon=lon, startutc=start_dt, stoputc=stop_dt, timestep=timestep, cache_dir=(cache_dir or "data/skyfield")
         )
 

@@ -71,14 +71,14 @@ def load_sun_ephemeris(
     return sun, earth, ts
 
 
-def compute_solar_altaz(
+def compute_solar_ephem(
     lat: float,
     lon: float,
     startutc: Optional[datetime] = None,
     stoputc: Optional[datetime] = None,
     timestep: int = 3600,
     cache_dir: Optional[Union[str, Path]] = "data/skyfield",
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the Sun’s apparent altitude/azimuth and the **unit ENU direction vector**
     over a time range at a given site.
@@ -110,6 +110,8 @@ def compute_solar_altaz(
         Apparent altitude (degrees). No atmospheric refraction applied.
     az_deg : ndarray of float, shape (N,)
         Apparent azimuth (degrees), clockwise from true north, wrapped to [0, 360).
+    dist_au : ndarray of fload, shape (N,)
+        Apparent distance between observer and Sun in astronomical units
     enu_unit : ndarray of float, shape (N, 3)
         Unit vectors pointing from the site toward the Sun in local ENU coordinates
         (columns: E, N, U). Each row has norm ~= 1.
@@ -163,6 +165,7 @@ def compute_solar_altaz(
 
     observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
     apparent = (earth + observer).at(t).observe(sun).apparent()  # type: ignore
+    dist_au = apparent.distance().au
     alt, az, _ = apparent.altaz()
 
     alt_deg = np.asarray(alt.degrees, dtype=float)
@@ -182,7 +185,7 @@ def compute_solar_altaz(
         axis=1,
     ).astype(float)
 
-    return times_utc, alt_deg, az_deg, enu_unit
+    return times_utc, alt_deg, az_deg, dist_au, enu_unit
 
 
 def solar_envelope_by_folding(

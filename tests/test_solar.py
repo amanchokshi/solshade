@@ -24,20 +24,55 @@ class FakeTimescale:
         return object()
 
 
+# class _AltAzCarrier:
+#     """Carries fixed alt/az arrays and returns them from .altaz()."""
+#
+#     def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray) -> None:
+#         self._alt = alt_arr
+#         self._az = az_arr
+#
+#     def altaz(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+#         # Return arrays that look like Skyfield Angle objects w/ .degrees
+#         class _Angle:
+#             def __init__(self, degrees: np.ndarray) -> None:
+#                 self.degrees = degrees
+#
+#         return _Angle(self._alt), _Angle(self._az), _Angle(np.zeros_like(self._alt))
+
+
 class _AltAzCarrier:
-    """Carries fixed alt/az arrays and returns them from .altaz()."""
+    """Carries fixed alt/az arrays and returns them from .altaz() and .distance()."""
 
-    def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray) -> None:
-        self._alt = alt_arr
-        self._az = az_arr
+    def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray, dist_au: np.ndarray | float | None = None) -> None:
+        self._alt = np.asarray(alt_arr, dtype=float)
+        self._az = np.asarray(az_arr, dtype=float)
 
-    def altaz(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Return arrays that look like Skyfield Angle objects w/ .degrees
+        if dist_au is None:
+            self._dist_au = np.ones_like(self._alt, dtype=float)  # 1 AU by default
+        else:
+            # Allow scalar or array; broadcast to alt shape
+            d = np.asarray(dist_au, dtype=float)
+            if d.shape == ():
+                d = np.full_like(self._alt, float(d))
+            if d.shape != self._alt.shape:
+                raise ValueError("dist_au must be scalar or same shape as alt/az arrays")
+            self._dist_au = d
+
+    def altaz(self):
+        # Return small objects that mimic Skyfield Angle with a .degrees attribute
         class _Angle:
             def __init__(self, degrees: np.ndarray) -> None:
                 self.degrees = degrees
 
         return _Angle(self._alt), _Angle(self._az), _Angle(np.zeros_like(self._alt))
+
+    def distance(self):
+        # Return a small object that mimics Skyfield Distance with an .au attribute
+        class _Distance:
+            def __init__(self, au: np.ndarray) -> None:
+                self.au = au
+
+        return _Distance(self._dist_au)
 
 
 class FakeObserver:
@@ -46,9 +81,10 @@ class FakeObserver:
        (earth + wgs84.latlon(...)).at(t).observe(sun).apparent().altaz()
     """
 
-    def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray) -> None:
+    def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray, dist_au: np.ndarray) -> None:
         self._alt = alt_arr
         self._az = az_arr
+        self._dist_au = dist_au
 
     # Support `earth + FakeObserver` by returning self from __radd__
     def __radd__(self, _other: Any) -> "FakeObserver":
@@ -61,19 +97,19 @@ class FakeObserver:
         return self
 
     def apparent(self) -> _AltAzCarrier:
-        return _AltAzCarrier(self._alt, self._az)
+        return _AltAzCarrier(self._alt, self._az, self._dist_au)
 
 
-def _make_fake_wgs84(alt_arr: np.ndarray, az_arr: np.ndarray):
+def _make_fake_wgs84(alt_arr: np.ndarray, az_arr: np.ndarray, dist_au: np.ndarray | float | None = None):
     """Return a tiny module-like object with .latlon() → FakeObserver."""
     import types
 
     mod = types.SimpleNamespace()
 
-    def _latlon(**_kwargs: Any) -> FakeObserver:
-        return FakeObserver(alt_arr, az_arr)
+    def _latlon(**_kwargs):  # matches wgs84.latlon signature loosely
+        return FakeObserver(alt_arr, az_arr, dist_au)
 
-    mod.latlon = _latlon  # type: ignore[attr-defined]
+    mod.latlon = _latlon
     return mod
 
 
@@ -85,11 +121,11 @@ def _stub_load_sun_ephemeris(_cache_dir: Path | None = None):
 
 
 # -------------------------------
-# compute_solar_altaz tests
+# compute_solar_ephem tests
 # -------------------------------
 
 
-def test_compute_solar_altaz_shapes_and_wrapping(monkeypatch: pytest.MonkeyPatch):
+def test_compute_solar_ephem_shapes_and_wrapping(monkeypatch: pytest.MonkeyPatch):
     """
     Validate:
       - time vector length and dtype
@@ -109,7 +145,7 @@ def test_compute_solar_altaz_shapes_and_wrapping(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
 
-    times, alt, az, _ = solar.compute_solar_altaz(10.0, 20.0, startutc=start, stoputc=stop, timestep=timestep)
+    times, alt, az, _, _ = solar.compute_solar_ephem(10.0, 20.0, startutc=start, stoputc=stop, timestep=timestep)
 
     assert times.dtype.kind == "M" and str(times.dtype) == "datetime64[ns]"
     assert len(times) == 4
@@ -117,7 +153,7 @@ def test_compute_solar_altaz_shapes_and_wrapping(monkeypatch: pytest.MonkeyPatch
     np.testing.assert_allclose(az, np.mod(az_arr, 360.0))
 
 
-def test_compute_solar_altaz_naive_vs_aware(monkeypatch: pytest.MonkeyPatch):
+def test_compute_solar_ephem_naive_vs_aware(monkeypatch: pytest.MonkeyPatch):
     """Naive datetimes should be treated as UTC and match aware results."""
     start_naive = datetime(2025, 1, 1, 0, 0, 0)
     stop_naive = start_naive + timedelta(hours=2)
@@ -131,30 +167,30 @@ def test_compute_solar_altaz_naive_vs_aware(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(alt_arr, az_arr))
 
-    t_n, alt_n, az_n, _ = solar.compute_solar_altaz(10.0, 20.0, start_naive, stop_naive, 3600)
-    t_a, alt_a, az_a, _ = solar.compute_solar_altaz(10.0, 20.0, start_aware, stop_aware, 3600)
+    t_n, alt_n, az_n, _, _ = solar.compute_solar_ephem(10.0, 20.0, start_naive, stop_naive, 3600)
+    t_a, alt_a, az_a, _, _ = solar.compute_solar_ephem(10.0, 20.0, start_aware, stop_aware, 3600)
 
     np.testing.assert_array_equal(t_n, t_a)
     np.testing.assert_allclose(alt_n, alt_a)
     np.testing.assert_allclose(az_n, az_a)
 
 
-def test_compute_solar_altaz_invalid_timestep(monkeypatch: pytest.MonkeyPatch):
+def test_compute_solar_ephem_invalid_timestep(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(np.array([0.0]), np.array([0.0])))
 
     with pytest.raises(ValueError):
-        solar.compute_solar_altaz(0.0, 0.0, timestep=0)
+        solar.compute_solar_ephem(0.0, 0.0, timestep=0)
 
 
-def test_compute_solar_altaz_stop_before_start(monkeypatch: pytest.MonkeyPatch):
+def test_compute_solar_ephem_stop_before_start(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(solar, "load_sun_ephemeris", _stub_load_sun_ephemeris)
     monkeypatch.setattr(solar, "wgs84", _make_fake_wgs84(np.array([0.0]), np.array([0.0])))
 
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     stop = start - timedelta(hours=1)
     with pytest.raises(ValueError):
-        solar.compute_solar_altaz(0.0, 0.0, startutc=start, stoputc=stop, timestep=3600)
+        solar.compute_solar_ephem(0.0, 0.0, startutc=start, stoputc=stop, timestep=3600)
 
 
 def test_compute_solar_enu_matches_trig(monkeypatch: pytest.MonkeyPatch):
@@ -170,7 +206,7 @@ def test_compute_solar_enu_matches_trig(monkeypatch: pytest.MonkeyPatch):
     # 4 samples -> use a tiny window (inclusive endpoints)
     start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     stop = start + timedelta(hours=4)
-    times, alt, az, enu = solar.compute_solar_altaz(10.0, 20.0, startutc=start, stoputc=stop, timestep=3600)
+    times, alt, az, _, enu = solar.compute_solar_ephem(10.0, 20.0, startutc=start, stoputc=stop, timestep=3600)
 
     # Sanity: we got as many rows as alt/az
     assert enu.shape == (alt_arr.size, 3)
@@ -204,7 +240,7 @@ def test_compute_solar_enu_cardinals_and_zenith(monkeypatch: pytest.MonkeyPatch)
 
     start = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     stop = start + timedelta(hours=2)
-    _, alt, az, enu = solar.compute_solar_altaz(51.5, -0.1, startutc=start, stoputc=stop, timestep=3600)
+    _, alt, az, _, enu = solar.compute_solar_ephem(51.5, -0.1, startutc=start, stoputc=stop, timestep=3600)
 
     # North on horizon
     np.testing.assert_allclose(enu[0], np.array([0.0, 1.0, 0.0]), rtol=1e-12, atol=1e-12)
