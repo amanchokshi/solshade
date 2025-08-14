@@ -18,7 +18,7 @@ from rich.progress import (
 from solshade.solar import nearest_horizon_indices
 
 
-@njit(parallel=False)
+@njit(parallel=False)  # pragma: no cover
 def _compute_flux_single_timestep(
     sun_alt: float,
     sun_enu: np.ndarray,  # shape (3,), dtype matches inputs
