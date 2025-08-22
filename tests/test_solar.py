@@ -1,6 +1,3 @@
-# tests/test_solar.py
-from __future__ import annotations
-
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -22,22 +19,6 @@ class FakeTimescale:
 
     def from_datetimes(self, dt_list: list[datetime]) -> object:  # noqa: D401
         return object()
-
-
-# class _AltAzCarrier:
-#     """Carries fixed alt/az arrays and returns them from .altaz()."""
-#
-#     def __init__(self, alt_arr: np.ndarray, az_arr: np.ndarray) -> None:
-#         self._alt = alt_arr
-#         self._az = az_arr
-#
-#     def altaz(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-#         # Return arrays that look like Skyfield Angle objects w/ .degrees
-#         class _Angle:
-#             def __init__(self, degrees: np.ndarray) -> None:
-#                 self.degrees = degrees
-#
-#         return _Angle(self._alt), _Angle(self._az), _Angle(np.zeros_like(self._alt))
 
 
 class _AltAzCarrier:

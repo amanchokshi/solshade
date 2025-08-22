@@ -1,24 +1,191 @@
-"""
-viz.py — Plotting utilities for DEM-based terrain analysis.
-
-This module provides functions to visualize:
-- Digital Elevation Models (DEMs)
-- Slope maps
-- Aspect maps
-- Hillshades
-
-All plots use physical coordinates (easting/northing in meters) and meaningful colorbars.
-"""
-
-from typing import Optional
+from typing import Optional, Tuple
 
 import cmasher as cmr
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
 from matplotlib.axes import Axes
+from matplotlib.colors import BoundaryNorm, Colormap, ListedColormap, to_rgba
 
 from solshade.terrain import compute_hillshade
+
+
+def truncate_colormap(
+    cmap: str | Colormap,
+    vmin: float = 0.0,
+    vmax: float = 1.0,
+    n: int = 256,
+) -> Colormap:
+    """
+    Create a new colormap from a subrange of an existing colormap.
+
+    Parameters
+    ----------
+    cmap : str or Colormap
+        The original colormap (name or instance).
+    vmin, vmax : float
+        Fractional range of the original colormap to use (0.0–1.0, with vmin < vmax).
+    n : int
+        Number of discrete colors in the new map.
+
+    Returns
+    -------
+    new_cmap : Colormap
+        The truncated colormap.
+
+    Notes
+    -----
+    - Preserves the base colormap's special colors: 'bad', 'under', and 'over'.
+    """
+    # Resolve cmap
+    if isinstance(cmap, str):
+        cmap = plt.get_cmap(cmap)
+
+    # STRICT validation (no pre-clipping)
+    if not (0.0 <= vmin < vmax <= 1.0):
+        raise ValueError("vmin and vmax must satisfy 0.0 <= vmin < vmax <= 1.0")
+    if n <= 0:
+        raise ValueError("n must be a positive integer")
+
+    # Build truncated colors and new map
+    new_colors = cmap(np.linspace(vmin, vmax, n))
+    new = mcolors.LinearSegmentedColormap.from_list(f"{cmap.name}_{vmin:.3f}_{vmax:.3f}", new_colors)
+
+    # Preserve special colors if present on the base cmap
+    if hasattr(cmap, "_rgba_bad") and getattr(cmap, "_rgba_bad") is not None:
+        new.set_bad(getattr(cmap, "_rgba_bad"))
+    if hasattr(cmap, "_rgba_under") and getattr(cmap, "_rgba_under") is not None:
+        new.set_under(getattr(cmap, "_rgba_under"))
+    if hasattr(cmap, "_rgba_over") and getattr(cmap, "_rgba_over") is not None:
+        new.set_over(getattr(cmap, "_rgba_over"))
+
+    return new
+
+
+def mirrored_discrete_doy_cmap(
+    doy_values: np.ndarray,
+    *,
+    sigma: float = 5.0,
+    cmap: str | Colormap = "viridis",
+    center_color: str = "whitesmoke",
+    clip_to_data: bool = True,
+    under_color: str | None = None,
+    over_color: str | None = None,
+    lo_hi: Tuple[int, int] | None = None,
+) -> tuple[ListedColormap, BoundaryNorm, np.ndarray, tuple[int, int, int]]:
+    """
+    Build a *mirrored*, discrete DoY colormap from a **single** base colormap.
+
+    Steps
+    -----
+    1) Compute median (int) and std over finite values in `doy_values` (or use `lo_hi` if provided).
+    2) Define integer range [lo, hi] around the median with an **odd** number of bins so the
+       median has its own center bin (assigned `center_color`).
+    3) Sample the *single* input colormap on [0, 0.5) and [0.5, 1.0) and reverse each half,
+       so colors near the center are the darkest/saturated.
+    4) Concatenate: [low_half_reversed] + [center] + [high_half_reversed].
+    5) Return a `ListedColormap`, a `BoundaryNorm` with half-integer edges, and `(lo, med, hi)`.
+
+    Parameters
+    ----------
+    doy_values : ndarray
+        DoY integer array (any shape). Only finite values are used to compute stats.
+    sigma : float, default 5.0
+        Range half-width in units of standard deviations from the median.
+    cmap : str or Colormap, default "viridis"
+        Base continuous colormap to split and invert around its midpoint.
+    center_color : str, default "whitesmoke"
+        Color assigned to the exact median bin.
+    clip_to_data : bool, default True
+        Clip [lo, hi] to the finite min/max of `doy_values`.
+    under_color, over_color : str or None
+        Optional colors for values < lo and > hi.
+    lo_hi : (int, int) or None
+        If provided, use this explicit (lo, hi) instead of median±sigma*std.
+
+    Returns
+    -------
+    listed : ListedColormap
+    norm : BoundaryNorm
+    boundaries : np.ndarray
+        Half-integer boundaries of length (number_of_bins + 1).
+    lo_med_hi : tuple[int, int, int]
+        The (lo, median, hi) integers used to build the bins.
+    """
+    a = np.asarray(doy_values)
+    finite = np.isfinite(a)
+    if not np.any(finite):
+        raise ValueError("No finite values in `doy_values`.")
+    if isinstance(cmap, str):
+        base = plt.get_cmap(cmap)
+    else:
+        base = cmap
+
+    med = int(np.rint(np.nanmedian(a[finite])))
+    if lo_hi is None:
+        std = float(np.nanstd(a[finite]))
+        if std == 0:
+            std = 0.5  # avoid zero range collapse
+        if sigma <= 0:
+            raise ValueError("sigma must be positive")
+        lo = int(np.floor(med - sigma * std))
+        hi = int(np.ceil(med + sigma * std))
+        if clip_to_data:
+            dmin = int(np.floor(np.nanmin(a[finite])))
+            dmax = int(np.ceil(np.nanmax(a[finite])))
+            lo = max(lo, dmin)
+            hi = min(hi, dmax)
+    else:
+        lo, hi = map(int, lo_hi)
+
+    # Ensure [lo, hi] brackets the median and yields an odd bin count
+    if hi <= med:
+        hi = med + 1
+    if lo >= med:
+        lo = med - 1
+    # bins = (hi - lo + 1) == n_low + 1 + n_high
+    if ((hi - lo + 1) % 2) == 0:  # even -> expand to make it odd
+        # Prefer expanding toward available data high side if possible
+        hi += 1
+
+    n_low = med - lo
+    n_high = hi - med
+    # Defensive: ensure at least one bin on each side
+    n_low = max(n_low, 1)
+    n_high = max(n_high, 1)
+
+    # Sample halves safely (no indexing off-by-one)
+    # Low side: n_low samples in [0.0, 0.5), reversed so center-adjacent is darker
+    if n_low == 1:
+        low_grid = np.array([0.25])
+    else:
+        low_grid = np.linspace(0.0, 0.5, n_low, endpoint=False)
+    low_half = base(low_grid)[::-1]
+
+    # High side: n_high samples in (0.5, 1.0], reversed so center-adjacent is darker
+    if n_high == 1:
+        high_grid = np.array([0.75])
+    else:
+        high_grid = np.linspace(0.5, 1.0, n_high + 1, endpoint=True)[1:]
+    high_half = base(high_grid)[::-1]
+
+    center_rgba = to_rgba(center_color)
+    colors = np.vstack([low_half, center_rgba, high_half])
+
+    listed = ListedColormap(colors, name=f"{base.name}_mirrored_discrete")
+    listed.set_bad(alpha=0.0)
+    if under_color is not None:
+        listed.set_under(under_color)
+    if over_color is not None:
+        listed.set_over(over_color)
+
+    # Half-integer boundaries so integer DoY values are centered in bins
+    boundaries = np.arange(lo - 0.5, hi + 1.5, 1.0, dtype=float)
+    norm = BoundaryNorm(boundaries, ncolors=listed.N, clip=False)
+
+    return listed, norm, boundaries, (lo, med, hi)
 
 
 def _get_extent(data: xr.DataArray) -> tuple[float, float, float, float]:
@@ -63,7 +230,9 @@ def plot_dem(dem: xr.DataArray, ax: Axes | None = None) -> Axes:
         _, ax = plt.subplots()
 
     extent = _get_extent(dem)
-    img = ax.imshow(dem.values, cmap=cmr.savanna, extent=extent, origin="upper")
+
+    truncated = truncate_colormap(cmr.pride, vmin=0.05, vmax=0.55)
+    img = ax.imshow(dem.values, cmap=truncated, extent=extent, origin="upper")
     ax.contour(dem.x, dem.y, dem.values, levels=9, colors="whitesmoke", linewidths=0.7, alpha=0.9, linestyles="dotted")
     ax.set_title("Digital Elevation Model")
     ax.set_xlabel("Easting (m)")
@@ -190,7 +359,8 @@ def plot_hillshade(
 
     hillshade = compute_hillshade(slope, aspect, azimuth_deg, altitude_deg)
     extent = _get_extent(slope)
-    ax.imshow(hillshade.values, cmap=cmr.savanna, extent=extent, origin="upper")
+    truncated = truncate_colormap(cmr.pride_r, vmin=0.05, vmax=0.55)
+    ax.imshow(hillshade.values, cmap=truncated, extent=extent, origin="upper")
     ax.set_title(f"Hillshade (Azimuth: {azimuth_deg}°, Altitude: {altitude_deg}°)")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
@@ -374,4 +544,122 @@ def plot_horizon_polar(
     ax.set_xticklabels([])  # hide default angle numbers
     ax.grid(ls=":", lw=0.7, zorder=7)
 
+    return ax
+
+
+def plot_total_energy(total_energy: xr.DataArray, ax: Axes | None = None) -> Axes:
+    """
+    Plot total integrated energy (J/m²) map.
+
+    Parameters
+    ----------
+    total_energy : xr.DataArray
+        2D array of total energy in J/m².
+    ax : matplotlib.axes.Axes, optional
+        Optional axis to draw the plot on.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    extent = _get_extent(total_energy)
+    truncated = truncate_colormap(cmr.pride_r, vmin=0.05, vmax=0.55)
+    im = ax.imshow(
+        total_energy.values,
+        cmap=truncated,
+        origin="upper",
+        extent=extent,
+    )
+    ax.set_title("Total Energy")
+    ax.set_xlabel("Easting (m)")
+    ax.set_ylabel("Northing (m)")
+    plt.colorbar(im, ax=ax, label="Flux [J/m²]")
+    return ax
+
+
+def plot_peak_energy(peak_energy: xr.DataArray, ax: Axes | None = None) -> Axes:
+    """
+    Plot peak daily energy (J/m²) map.
+
+    Parameters
+    ----------
+    peak_energy : xr.DataArray
+        2D array of maximum daily energy.
+    ax : matplotlib.axes.Axes, optional
+        Optional axis to draw the plot on.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    extent = _get_extent(peak_energy)
+    truncated = truncate_colormap(cmr.pride_r, vmin=0.05, vmax=0.55)
+    im = ax.imshow(
+        peak_energy.values,
+        cmap=truncated,
+        origin="upper",
+        extent=extent,
+    )
+    ax.set_title("Peak Daily Energy")
+    ax.set_xlabel("Easting (m)")
+    ax.set_ylabel("Northing (m)")
+    plt.colorbar(im, ax=ax, label="Flux [J/m²]")
+    return ax
+
+
+def plot_day_of_peak(
+    day_of_peak: xr.DataArray,
+    times_utc: np.ndarray,
+    sigma: float = 9,
+    cmap_base: str | Colormap = cmr.seasons,
+    ax: Axes | None = None,
+) -> Axes:
+    """
+    Plot the day-of-peak energy using a mirrored discrete colormap.
+
+    Parameters
+    ----------
+    day_of_peak : xr.DataArray
+        2D array of DoY (1–366) when peak energy occurred.
+    times_utc : np.ndarray
+        Time array used to resolve calendar year for tick labeling.
+    sigma : float, default 9.0
+        Std-deviation half-width used in colormap.
+    cmap_base : Colormap or str, default cmr.seasons
+        Base continuous colormap to mirror and discretize.
+    ax : matplotlib.axes.Axes, optional
+        Optional axis to draw the plot on.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 5))
+
+    dop_vals = day_of_peak.values.astype(float)
+
+    truncated = truncate_colormap(cmap_base, vmin=0.2, vmax=0.8)
+    cmap, norm, boundaries, (lo, _, hi) = mirrored_discrete_doy_cmap(dop_vals, sigma=sigma, cmap=truncated)
+
+    extent = _get_extent(day_of_peak)
+    im = ax.imshow(dop_vals, cmap=cmap, norm=norm, origin="upper", extent=extent)
+
+    ticks = np.arange(lo, hi + 1, 2)
+    year = pd.to_datetime(times_utc[0]).year
+    dates = pd.to_datetime([f"{year}-{doy:03d}" for doy in ticks], format="%Y-%j")
+    labels = [d.upper() for d in dates.strftime("%b %d")]
+
+    cbar = plt.colorbar(im, ax=ax, boundaries=boundaries, ticks=ticks, extend="both")
+    cbar.ax.set_yticklabels(labels)
+
+    ax.set_title("Day of Peak Energy")
+    ax.set_xlabel("Easting (m)")
+    ax.set_ylabel("Northing (m)")
     return ax

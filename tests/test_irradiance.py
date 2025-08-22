@@ -7,9 +7,9 @@ import xarray as xr
 
 from solshade.irradiance import compute_energy_metrics, compute_flux_timeseries
 
-# ============================================================
+# -------------------------------
 # Helpers
-# ============================================================
+# -------------------------------
 
 
 def _sun_vectors_from_altaz(alt_deg: np.ndarray, az_deg: np.ndarray) -> np.ndarray:
@@ -57,9 +57,9 @@ def _normals_up(y: int, x: int) -> xr.DataArray:
     )
 
 
-# ============================================================
+# -------------------------------
 # Fixtures
-# ============================================================
+# -------------------------------
 
 
 @pytest.fixture
@@ -76,9 +76,9 @@ def tiny_scene() -> Tuple[xr.DataArray, xr.DataArray, np.ndarray, np.ndarray, np
     return horizon, normals, sun_alt, sun_az, sun_au, sun_enu, times
 
 
-# ============================================================
+# -------------------------------
 # Core behavior
-# ============================================================
+# -------------------------------
 
 
 def test_flux_basic_shadow_lambertian_nan_and_au_scaling():
@@ -140,9 +140,9 @@ def test_flux_basic_shadow_lambertian_nan_and_au_scaling():
         assert np.isnan(got[1, 1])
 
 
-# ============================================================
+# -------------------------------
 # Validation / error paths
-# ============================================================
+# -------------------------------
 
 
 def test_missing_azimuths_attr_raises(tiny_scene):
@@ -227,9 +227,9 @@ def test_normals_dim_validation_and_labels(tiny_scene):
         compute_flux_timeseries(horizon, sun_alt, sun_az, sun_au, sun_enu, normals_wrong_labels, times)
 
 
-# ============================================================
+# -------------------------------
 # Time/attrs wiring
-# ============================================================
+# -------------------------------
 
 
 def test_time_coords_and_attrs_strings_present(tiny_scene):
@@ -253,9 +253,9 @@ def test_time_coord_without_datetime64_skips_iso_attr(tiny_scene):
     assert "time_utc_iso" not in flux.attrs
 
 
-# ============================================================
+# -------------------------------
 # Energy metrics
-# ============================================================
+# -------------------------------
 
 
 def test_compute_energy_metrics_shapes_and_peak_day():

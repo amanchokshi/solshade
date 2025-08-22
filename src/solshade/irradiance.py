@@ -87,7 +87,7 @@ def compute_flux_timeseries(
     toa: float = 1361.0,
     dtype: np.dtype = np.dtype(np.float32),
     n_jobs: int = -1,
-    batch_size: int = 256,
+    batch_size: int = 512,
     backend: str = "threading",
     prefer: Optional[str] = "threads",
 ) -> xr.DataArray:
@@ -280,33 +280,35 @@ def compute_energy_metrics(flux: xr.DataArray) -> tuple[xr.DataArray, xr.DataArr
     """
     Compute daily, total, peak energy, and day-of-peak from a time series of flux.
 
-    Parameters
-    ----------
-    flux : xr.DataArray
-        Irradiance or flux values with a 'time' coordinate.
+    Strategy:
+    - Daily integration uses trapezoidal rule over time per day.
+    - If *any* NaNs are present in a day's flux values for a pixel, that day's energy is set to NaN.
+    - If *any* daily energy is NaN for a pixel, all metrics for that pixel are set to NaN.
 
     Returns
     -------
-    daily_energy : xr.DataArray
-        Daily summed energy [same units as flux × time].
-    total_energy : xr.DataArray
-        Total summed energy over the entire period.
-    peak_energy : xr.DataArray
-        Peak daily energy.
-    day_of_peak : xr.DataArray
-        Day-of-year (1–366) corresponding to the peak daily energy.
+    daily_energy : xr.DataArray   # units: J m^-2
+    total_energy : xr.DataArray   # units: J m^-2
+    peak_energy  : xr.DataArray   # units: J m^-2
+    day_of_peak  : xr.DataArray   # integer DoY (1–366)
     """
-    # Sum over each day
-    daily_energy = flux.resample(time="1D").sum(skipna=True)
 
-    # Total energy over all days
-    total_energy = daily_energy.sum(dim="time", skipna=True)
+    # Strict daily integration: NaN if *any* timestep that day is NaN
+    def safe_integrate_day(da):
+        # da: (time, y, x) for a single day
+        nanmask = da.isnull().any(dim="time")
+        integrated = da.integrate("time", datetime_unit="s")
+        return integrated.where(~nanmask)
 
-    # Peak daily energy
-    peak_energy = daily_energy.max(dim="time")
+    # Group by day and apply strict integration
+    daily_energy = flux.resample(time="1D").map(safe_integrate_day).astype("float32")
 
-    # Day-of-year of peak
-    peak_dates = daily_energy.astype("float64").idxmax(dim="time")
-    day_of_peak = peak_dates.dt.dayofyear
+    # If any day has NaN, set all outputs to NaN for that pixel
+    invalid_mask = daily_energy.isnull().any(dim="time")
+
+    total_energy = daily_energy.sum(dim="time", skipna=True).where(~invalid_mask)
+    peak_energy = daily_energy.max(dim="time", skipna=True).where(~invalid_mask)
+    peak_dates = daily_energy.astype("float64").idxmax(dim="time", skipna=True).where(~invalid_mask)
+    day_of_peak = peak_dates.dt.dayofyear.where(~invalid_mask)
 
     return daily_energy, total_energy, peak_energy, day_of_peak

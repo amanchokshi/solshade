@@ -93,7 +93,7 @@ def compute_solar_ephem(
     lon : float
         Geographic longitude in degrees (+E).
     startutc : datetime, optional
-        UTC start time. If None, uses current UTC. If naive, assumed UTC.
+        UTC start time. If None, uses start of current UTC year. If naive, assumed UTC.
     stoputc : datetime, optional
         UTC stop time. If None, defaults to one year after ``startutc``.
         Must be strictly after ``startutc``. If naive, assumed UTC.
@@ -142,9 +142,9 @@ def compute_solar_ephem(
         return dt.astimezone(timezone.utc)
 
     # ---- Time range & validation ----
-    now_utc = datetime.now(timezone.utc)
-    start_dt = ensure_utc(startutc) if startutc else now_utc
-    stop_dt = ensure_utc(stoputc) if stoputc else (start_dt + timedelta(days=365))
+    start_of_year_utc = datetime(datetime.now(timezone.utc).year, 1, 1, tzinfo=timezone.utc)
+    start_dt = ensure_utc(startutc) if startutc else start_of_year_utc
+    stop_dt = ensure_utc(stoputc) if stoputc else (start_of_year_utc + timedelta(days=365))
 
     if timestep <= 0:
         raise ValueError("timestep must be a positive number of seconds")

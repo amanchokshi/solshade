@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -13,9 +12,24 @@ from rasterio.transform import Affine, rowcol
 from rich.console import Console
 from rich.markup import escape
 
-from solshade.solar import compute_solar_ephem
+from solshade.irradiance import compute_energy_metrics, compute_flux_timeseries
+from solshade.solar import (
+    compute_solar_ephem,
+    solar_envelope_by_folding,  # assumes you've added this
+)
 from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, load_dem
-from solshade.viz import plot_aspect, plot_dem, plot_hillshade, plot_horizon_polar, plot_normals, plot_slope
+from solshade.utils import parse_iso_utc, read_geotiff, transfer_spatial_metadata, write_geotiff
+from solshade.viz import (
+    plot_aspect,
+    plot_day_of_peak,
+    plot_dem,
+    plot_hillshade,
+    plot_horizon_polar,
+    plot_normals,
+    plot_peak_energy,
+    plot_slope,
+    plot_total_energy,
+)
 
 console = Console()
 app = typer.Typer(help="Terrain-aware solar illumination modeling using DEMs and orbital solar geometry.")
@@ -77,7 +91,7 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         console.print(f"\t[white]{str(k).upper()}: {escape(str(pretty))}[/white]")
 
 
-compute_app = typer.Typer(help="Compute slope, aspect, normals, hillshade or horizon maps from DEMs.")
+compute_app = typer.Typer(help="Compute slope, aspect, normals, hillshade, horizon or flux timeseries maps from DEMs.")
 app.add_typer(compute_app, name="compute")
 
 
@@ -152,6 +166,86 @@ def compute_horizon_cmd(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     result.rio.to_raster(out_path)
     typer.echo(f"Saved horizon map to {out_path}")
+
+
+@compute_app.command("fluxseries")
+def compute_fluxseries_cmd(
+    dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIFF."),
+    horizon_path: Path = typer.Argument(..., help="Path to the HORIZON GeoTIFF."),
+    lat: Optional[float] = typer.Option(None, help="Latitude in degrees (optional, defaults to DEM center)."),
+    lon: Optional[float] = typer.Option(None, help="Longitude in degrees (optional, defaults to DEM center)."),
+    start_utc: Optional[str] = typer.Option(None, help="ISO UTC start time, e.g. '2025-01-01T00:00:00Z'."),
+    stop_utc: Optional[str] = typer.Option(None, help="ISO UTC stop time, e.g. '2026-01-01T00:00:00Z'."),
+    batch_size: int = typer.Option(512, help="Number of time steps per parallel batch."),
+    n_jobs: int = typer.Option(-1, help="Number of parallel jobs (default: all cores)."),
+    output_dir: Optional[Path] = typer.Option(None, help="Directory to save output GeoTIFFs"),
+):
+    """
+    Compute per-pixel solar flux timeseries using DEM and horizon maps, accounting for terrain shading and geometry.
+
+    Produces daily energy maps, total integrated energy, day of peak, and peak energy GeoTIFFs.
+    """
+    output_dir = output_dir or dem_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"Computing flux timeseries from {dem_path.name} and {horizon_path.name}...")
+
+    dem = load_dem(dem_path)
+    horizon = load_dem(horizon_path)
+    slope, aspect, normal_enu = compute_slope_aspect_normals(dem)
+
+    # Determine lat/lon if not provided
+    if lat is None or lon is None:
+        # Get center pixel
+        ny, nx = dem.shape[-2:]
+        center_y, center_x = ny // 2, nx // 2
+        x, y = dem.rio.transform() * (center_x + 0.5, center_y + 0.5)
+
+        # Convert to lat/lon if needed
+        if dem.rio.crs.to_epsg() != 4326:
+            transformer = Transformer.from_crs(dem.rio.crs, "EPSG:4326", always_xy=True)
+            lon, lat = transformer.transform(x, y)
+        else:
+            lon, lat = x, y
+
+    times_utc, solar_alt, solar_az, sun_au, solar_enu = compute_solar_ephem(
+        lat=79.4, lon=-90.73, startutc=parse_iso_utc(start_utc), stoputc=parse_iso_utc(start_utc)
+    )
+    flux = compute_flux_timeseries(
+        horizon=horizon,
+        sun_alt_deg=solar_alt,
+        sun_az_deg=solar_az,
+        sun_au=sun_au,
+        sun_enu=solar_enu,
+        normal_enu=normal_enu,
+        times_utc=times_utc,
+        batch_size=batch_size,
+        n_jobs=n_jobs,
+    )
+
+    # flux = transfer_spatial_metadata(flux, dem, extra_dim=("time", times_utc))
+    # out_path = (output_dir or horizon_path.parent) / f"{dem_path.stem}_FLUXSERIES.tif"
+    # write_geotiff(flux, str(out_path))
+    # typer.echo(f"Saved fluxseries map to {out_path}")
+
+    typer.echo("Computing flux metrics")
+    daily_energy, total_energy, peak_energy, day_of_peak = compute_energy_metrics(flux)
+    daily_iso = np.datetime_as_string(daily_energy.time.astype("datetime64[s]"), unit="s", timezone="UTC").tolist()  # type: ignore
+
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "daily_energy": daily_energy,
+        "total_energy": total_energy,
+        "peak_energy": peak_energy,
+        "day_of_peak": day_of_peak,
+    }
+
+    for xr_name, xr_array in data.items():
+        out_path = (output_dir or horizon_path.parent) / f"{dem_path.stem}_{xr_name.upper()}.tif"
+        xr_array = transfer_spatial_metadata(xr_array, dem, attrs={"daily_iso_times": json.dumps(daily_iso)})
+        write_geotiff(xr_array, str(out_path))
+        typer.echo(f"Saved {xr_name.upper()} map to {out_path}")
 
 
 plot_app = typer.Typer(help="Plot dem, aspect, slope or hillshade maps from a DEM and display or save them to pngs.")
@@ -276,7 +370,6 @@ def plot_horizon_cmd(
     lat: float = typer.Option(..., help="Latitude of point of interest (degrees, +N)."),
     lon: float = typer.Option(..., help="Longitude of point of interest (degrees, +E)."),
     output_dir: Optional[Path] = typer.Option(None, help="Directory to save polar plot."),
-    # New options:
     solar: bool = typer.Option(False, help="Overlay solar envelope (min/max altitude)."),
     startutc: Optional[str] = typer.Option(None, help="ISO UTC start time, e.g. '2025-01-01T00:00:00Z'."),
     stoputc: Optional[str] = typer.Option(None, help="ISO UTC stop time, e.g. '2026-01-01T00:00:00Z'."),
@@ -286,17 +379,6 @@ def plot_horizon_cmd(
     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif.
     Optionally overlay a solar altitude envelope computed from Skyfield.
     """
-
-    from solshade.solar import solar_envelope_by_folding  # assumes you've added this
-    from solshade.terrain import load_dem
-
-    def _parse_iso_utc(s: str) -> datetime:
-        # Accept '...Z' or timezone-aware/naive; normalize to UTC
-        iso = s.strip().replace("Z", "+00:00")
-        dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
 
     horizon_da = load_dem(horizon_path)
 
@@ -330,12 +412,13 @@ def plot_horizon_cmd(
     # Optional solar overlay (envelope)
     sun_kwargs = {}
     if solar:
-        # Times: use defaults if not supplied (your compute_solar_altaz handles defaults)
-        start_dt = _parse_iso_utc(startutc) if startutc else None
-        stop_dt = _parse_iso_utc(stoputc) if stoputc else None
-
         times_utc, alt_deg, az_deg, _, _ = compute_solar_ephem(
-            lat=lat, lon=lon, startutc=start_dt, stoputc=stop_dt, timestep=timestep, cache_dir=(cache_dir or "data/skyfield")
+            lat=lat,
+            lon=lon,
+            startutc=parse_iso_utc(startutc),
+            stoputc=parse_iso_utc(stoputc),
+            timestep=timestep,
+            cache_dir=(cache_dir or "data/skyfield"),
         )
 
         # Build smooth solar envelope (min/max altitude vs azimuth)
@@ -360,6 +443,71 @@ def plot_horizon_cmd(
         plt.savefig(out_path)
         typer.echo(f"Saved horizon polar plot to {out_path}")
     else:
+        if not os.getenv("SOLSHADE_TEST_MODE"):
+            plt.show()  # pragma: no cover
+
+
+@plot_app.command("total-energy")
+def plot_total_energy_cmd(
+    total_energy_path: Path,
+    output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+):
+    """Plot total energy map."""
+    total_energy = read_geotiff(str(total_energy_path))
+    _, ax = plt.subplots(figsize=(7, 5))
+    plot_total_energy(total_energy, ax=ax)
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / (total_energy_path.stem + "_TOTAL_ENERGY.png")
+        plt.tight_layout()
+        plt.savefig(out_path)
+        typer.echo(f"Saved TOTAL ENERGY plot to {out_path}")
+    else:
+        plt.tight_layout()
+        if not os.getenv("SOLSHADE_TEST_MODE"):
+            plt.show()  # pragma: no cover
+
+
+@plot_app.command("peak-energy")
+def plot_peak_energy_cmd(
+    peak_energy_path: Path,
+    output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+):
+    """Plot peak energy map."""
+    peak_energy = read_geotiff(str(peak_energy_path))
+    _, ax = plt.subplots(figsize=(7, 5))
+    plot_peak_energy(peak_energy, ax=ax)
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / (peak_energy_path.stem + "_PEAK_ENERGY.png")
+        plt.tight_layout()
+        plt.savefig(out_path)
+        typer.echo(f"Saved PEAK ENERGY plot to {out_path}")
+    else:
+        plt.tight_layout()
+        if not os.getenv("SOLSHADE_TEST_MODE"):
+            plt.show()  # pragma: no cover
+
+
+@plot_app.command("day-of-peak")
+def plot_dop_cmd(
+    day_of_peak_path: Path,
+    output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+):
+    """Plot day of peak map."""
+    dop = read_geotiff(str(day_of_peak_path))
+    raw = dop.attrs.get("daily_iso_times", "[]")
+    daily_iso = np.array([s.rstrip("Z") for s in json.loads(raw)], dtype="datetime64[s]")
+    _, ax = plt.subplots(figsize=(7, 5))
+    plot_day_of_peak(dop, daily_iso, sigma=9, ax=ax)
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / (day_of_peak_path.stem + "_DAY_OF_PEAK.png")
+        plt.tight_layout()
+        plt.savefig(out_path)
+        typer.echo(f"Saved DAY OF PEAK plot to {out_path}")
+    else:
+        plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
             plt.show()  # pragma: no cover
 
