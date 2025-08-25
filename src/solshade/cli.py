@@ -15,7 +15,7 @@ from rich.markup import escape
 from solshade.irradiance import compute_energy_metrics, compute_flux_timeseries
 from solshade.solar import (
     compute_solar_ephem,
-    solar_envelope_by_folding,  # assumes you've added this
+    solar_envelope_by_folding,
 )
 from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, load_dem
 from solshade.utils import parse_iso_utc, read_geotiff, transfer_spatial_metadata, write_geotiff
@@ -91,38 +91,77 @@ def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIF
         console.print(f"\t[white]{str(k).upper()}: {escape(str(pretty))}[/white]")
 
 
+# =========================
+# Compute sub-commands
+# =========================
 compute_app = typer.Typer(help="Compute slope, aspect, normals, hillshade, horizon or flux timeseries maps from DEMs.")
 app.add_typer(compute_app, name="compute")
 
 
 @compute_app.command("slope")
-def compute_slope_cmd(dem_path: Path, output_dir: Optional[Path] = None):
+def compute_slope_cmd(
+    dem_path: Path,
+    output_dir: Optional[Path] = None,
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
+):
+    """Compute slope from DEM and save GeoTIFF."""
     dem = load_dem(dem_path)
     slope_da, _, _ = compute_slope_aspect_normals(dem)
-    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_SLOPE.tif"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    outdir = output_dir or dem_path.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / (filename if filename else f"{dem_path.stem}_SLOPE.tif")
+
     slope_da.rio.to_raster(out_path)
     typer.echo(f"Saved slope to {out_path}")
 
 
 @compute_app.command("aspect")
-def compute_aspect_cmd(dem_path: Path, output_dir: Optional[Path] = None):
+def compute_aspect_cmd(
+    dem_path: Path,
+    output_dir: Optional[Path] = None,
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
+):
+    """Compute aspect from DEM and save GeoTIFF."""
     dem = load_dem(dem_path)
     _, aspect_da, _ = compute_slope_aspect_normals(dem)
-    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_ASPECT.tif"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    outdir = output_dir or dem_path.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / (filename if filename else f"{dem_path.stem}_ASPECT.tif")
+
     aspect_da.rio.to_raster(out_path)
     typer.echo(f"Saved aspect to {out_path}")
 
 
 @compute_app.command("normals")
-def compute_normal_cmd(dem_path: Path, output_dir: Optional[Path] = None):
+def compute_normal_cmd(
+    dem_path: Path,
+    output_dir: Optional[Path] = None,
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
+):
+    """Compute ENU surface normals from DEM and save 3-band GeoTIFF."""
     dem = load_dem(dem_path)
     _, _, normal = compute_slope_aspect_normals(dem)
-    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_NORMALS.tif"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    outdir = output_dir or dem_path.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / (filename if filename else f"{dem_path.stem}_NORMALS.tif")
+
     normal.rio.to_raster(out_path)
-    typer.echo(f"Saved aspect to {out_path}")
+    typer.echo(f"Saved normals to {out_path}")
 
 
 @compute_app.command("hillshade")
@@ -131,12 +170,22 @@ def compute_hillshade_cmd(
     azimuth: float = 315.0,
     altitude: float = 45.0,
     output_dir: Optional[Path] = None,
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
+    """Compute hillshade from DEM and save GeoTIFF."""
     dem = load_dem(dem_path)
     slope, aspect, _ = compute_slope_aspect_normals(dem)
     hillshade_da = compute_hillshade(slope, aspect, azimuth, altitude)
-    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    outdir = output_dir or dem_path.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    default_name = f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.tif"
+    out_path = outdir / (filename if filename else default_name)
+
     hillshade_da.rio.to_raster(out_path)
     typer.echo(f"Saved hillshade to {out_path}")
 
@@ -145,13 +194,19 @@ def compute_hillshade_cmd(
 def compute_horizon_cmd(
     dem_path: Path,
     n_directions: int = 360,
-    max_distance: float = 5000,
+    max_distance: float = 2000,
     step: float = 20,
     chunk_size: int = 32,
     n_jobs: int = -1,
     no_progress: bool = False,
     output_dir: Optional[Path] = None,
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
+    """Compute horizon map from DEM and save GeoTIFF."""
     dem = load_dem(dem_path)
     result = compute_horizon_map(
         dem,
@@ -162,8 +217,12 @@ def compute_horizon_cmd(
         n_jobs=n_jobs,
         progress=not no_progress,
     )
-    out_path = (output_dir or dem_path.parent) / f"{dem_path.stem}_HORIZON_{int(n_directions)}.tif"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    outdir = output_dir or dem_path.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    default_name = f"{dem_path.stem}_HORIZON_{int(n_directions)}.tif"
+    out_path = outdir / (filename if filename else default_name)
+
     result.rio.to_raster(out_path)
     typer.echo(f"Saved horizon map to {out_path}")
 
@@ -179,11 +238,18 @@ def compute_fluxseries_cmd(
     batch_size: int = typer.Option(512, help="Number of time steps per parallel batch."),
     n_jobs: int = typer.Option(-1, help="Number of parallel jobs (default: all cores)."),
     output_dir: Optional[Path] = typer.Option(None, help="Directory to save output GeoTIFFs"),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """
     Compute per-pixel solar flux timeseries using DEM and horizon maps, accounting for terrain shading and geometry.
 
     Produces daily energy maps, total integrated energy, day of peak, and peak energy GeoTIFFs.
+
+    Note: --filename is treated as a base stem; metric-specific suffixes are still appended.
     """
     output_dir = output_dir or dem_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -223,11 +289,6 @@ def compute_fluxseries_cmd(
         n_jobs=n_jobs,
     )
 
-    # flux = transfer_spatial_metadata(flux, dem, extra_dim=("time", times_utc))
-    # out_path = (output_dir or horizon_path.parent) / f"{dem_path.stem}_FLUXSERIES.tif"
-    # write_geotiff(flux, str(out_path))
-    # typer.echo(f"Saved fluxseries map to {out_path}")
-
     typer.echo("Computing flux metrics")
     daily_energy, total_energy, peak_energy, day_of_peak = compute_energy_metrics(flux)
     daily_iso = np.datetime_as_string(daily_energy.time.astype("datetime64[s]"), unit="s", timezone="UTC").tolist()  # type: ignore
@@ -241,13 +302,19 @@ def compute_fluxseries_cmd(
         "day_of_peak": day_of_peak,
     }
 
+    # If --filename is provided, treat it as the base stem for all four outputs
+    base_stem = Path(filename).stem if filename else dem_path.stem
+
     for xr_name, xr_array in data.items():
-        out_path = (output_dir or horizon_path.parent) / f"{dem_path.stem}_{xr_name.upper()}.tif"
+        out_path = (output_dir or horizon_path.parent) / f"{base_stem}_{xr_name.upper()}.tif"
         xr_array = transfer_spatial_metadata(xr_array, dem, attrs={"daily_iso_times": json.dumps(daily_iso)})
         write_geotiff(xr_array, str(out_path))
         typer.echo(f"Saved {xr_name.upper()} map to {out_path}")
 
 
+# =========================
+# Plot sub-commands
+# =========================
 plot_app = typer.Typer(help="Plot dem, aspect, slope or hillshade maps from a DEM and display or save them to pngs.")
 app.add_typer(plot_app, name="plot")
 plt.rcParams["font.family"] = "serif"
@@ -257,6 +324,11 @@ plt.rcParams["font.family"] = "serif"
 def plot_dem_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot the DEM with contours."""
     dem = load_dem(dem_path)
@@ -264,7 +336,7 @@ def plot_dem_cmd(
     ax = plot_dem(dem, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_DEM.png")
+        out_path = output_dir / (filename if filename else f"{dem_path.stem}_DEM.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved DEM plot to {out_path}")
@@ -278,6 +350,11 @@ def plot_dem_cmd(
 def plot_slope_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot the slope derived from a DEM."""
     dem = load_dem(dem_path)
@@ -286,7 +363,7 @@ def plot_slope_cmd(
     ax = plot_slope(slope, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_SLOPE.png")
+        out_path = output_dir / (filename if filename else f"{dem_path.stem}_SLOPE.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved slope plot to {out_path}")
@@ -300,6 +377,11 @@ def plot_slope_cmd(
 def plot_aspect_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot the aspect derived from a DEM."""
     dem = load_dem(dem_path)
@@ -308,7 +390,7 @@ def plot_aspect_cmd(
     ax = plot_aspect(aspect, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_ASPECT.png")
+        out_path = output_dir / (filename if filename else f"{dem_path.stem}_ASPECT.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved aspect plot to {out_path}")
@@ -322,18 +404,23 @@ def plot_aspect_cmd(
 def plot_normals_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
-    """Plot rgb map of enu normals derived from a DEM."""
+    """Plot RGB map of ENU normals derived from a DEM."""
     dem = load_dem(dem_path)
     _, _, normals = compute_slope_aspect_normals(dem)
     _, ax = plt.subplots(figsize=(7, 5))
     ax = plot_normals(normals, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (dem_path.stem + "_NORMALS.png")
+        out_path = output_dir / (filename if filename else f"{dem_path.stem}_NORMALS.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved aspect plot to {out_path}")
+        typer.echo(f"Saved normals plot to {out_path}")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -346,6 +433,11 @@ def plot_hillshade_cmd(
     azimuth: float = typer.Option(315.0, help="Sun azimuth in degrees."),
     altitude: float = typer.Option(45.0, help="Sun altitude in degrees."),
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot hillshade from a DEM using specified illumination angles."""
     dem = load_dem(dem_path)
@@ -354,7 +446,8 @@ def plot_hillshade_cmd(
     ax = plot_hillshade(slope, aspect, azimuth, altitude, ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.png"
+        default_name = f"{dem_path.stem}_HILLSHADE_{int(azimuth)}_{int(altitude)}.png"
+        out_path = output_dir / (filename if filename else default_name)
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved hillshade plot to {out_path}")
@@ -375,11 +468,15 @@ def plot_horizon_cmd(
     stoputc: Optional[str] = typer.Option(None, help="ISO UTC stop time, e.g. '2026-01-01T00:00:00Z'."),
     timestep: int = typer.Option(3600, help="Sampling step (seconds) for solar calculation."),
     cache_dir: Optional[Path] = typer.Option(None, help="Skyfield cache directory (defaults to ./data/skyfield)."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif.
     Optionally overlay a solar altitude envelope computed from Skyfield.
     """
-
     horizon_da = load_dem(horizon_path)
 
     # Reproject the query lon/lat into the raster CRS and find its pixel
@@ -420,15 +517,8 @@ def plot_horizon_cmd(
             timestep=timestep,
             cache_dir=(cache_dir or "data/skyfield"),
         )
-
-        # Build smooth solar envelope (min/max altitude vs azimuth)
         az_smooth, min_alt_smooth, max_alt_smooth = solar_envelope_by_folding(times_utc, alt_deg, az_deg, smooth_n=360)
-
-        sun_kwargs = {
-            "sunaz": az_smooth,
-            "sunaltmin": min_alt_smooth,
-            "sunaltmax": max_alt_smooth,
-        }
+        sun_kwargs = {"sunaz": az_smooth, "sunaltmin": min_alt_smooth, "sunaltmax": max_alt_smooth}
 
     plot_horizon_polar(azimuths, profile, ax, **sun_kwargs)
     ax.set_title(f"Horizon Map: [Lat: {lat:.6f}°, Lon: {lon:.6f}°]", va="bottom")
@@ -436,10 +526,13 @@ def plot_horizon_cmd(
     plt.tight_layout()
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        if solar:
-            out_path = output_dir / f"{horizon_path.stem}_SOLAR_{lat:.8f}_{lon:.8f}.png"
+        if filename:
+            out_path = output_dir / filename
         else:
-            out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
+            if solar:
+                out_path = output_dir / f"{horizon_path.stem}_SOLAR_{lat:.8f}_{lon:.8f}.png"
+            else:
+                out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
         plt.savefig(out_path)
         typer.echo(f"Saved horizon polar plot to {out_path}")
     else:
@@ -451,6 +544,11 @@ def plot_horizon_cmd(
 def plot_total_energy_cmd(
     total_energy_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot total energy map."""
     total_energy = read_geotiff(str(total_energy_path))
@@ -458,7 +556,7 @@ def plot_total_energy_cmd(
     plot_total_energy(total_energy, ax=ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (total_energy_path.stem + "_TOTAL_ENERGY.png")
+        out_path = output_dir / (filename if filename else f"{total_energy_path.stem}_TOTAL_ENERGY.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved TOTAL ENERGY plot to {out_path}")
@@ -472,6 +570,11 @@ def plot_total_energy_cmd(
 def plot_peak_energy_cmd(
     peak_energy_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot peak energy map."""
     peak_energy = read_geotiff(str(peak_energy_path))
@@ -479,7 +582,7 @@ def plot_peak_energy_cmd(
     plot_peak_energy(peak_energy, ax=ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (peak_energy_path.stem + "_PEAK_ENERGY.png")
+        out_path = output_dir / (filename if filename else f"{peak_energy_path.stem}_PEAK_ENERGY.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved PEAK ENERGY plot to {out_path}")
@@ -493,6 +596,11 @@ def plot_peak_energy_cmd(
 def plot_dop_cmd(
     day_of_peak_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        help="Custom output tif/png filename for compute/plot commands respectively.",
+    ),
 ):
     """Plot day of peak map."""
     dop = read_geotiff(str(day_of_peak_path))
@@ -502,7 +610,7 @@ def plot_dop_cmd(
     plot_day_of_peak(dop, daily_iso, sigma=9, ax=ax)
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / (day_of_peak_path.stem + "_DAY_OF_PEAK.png")
+        out_path = output_dir / (filename if filename else f"{day_of_peak_path.stem}_DAY_OF_PEAK.png")
         plt.tight_layout()
         plt.savefig(out_path)
         typer.echo(f"Saved DAY OF PEAK plot to {out_path}")

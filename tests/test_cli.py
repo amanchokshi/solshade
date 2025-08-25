@@ -342,6 +342,43 @@ def test_compute_horizon_cmd_runner_covers_cli(tmp_path, monkeypatch):
     assert "Saved horizon map" in result.stdout
 
 
+def test_plot_horizon_cmd_with_custom_filename(mock_horizon_file, tmp_path):
+    """Covers the --filename branch of plot_horizon_cmd."""
+    from solshade.cli import app
+
+    outdir = tmp_path / "plots"
+    custom_name = "custom_horizon.png"
+
+    # A valid lat/lon inside the mock_horizon_file (its center pixel)
+    from pyproj import Transformer
+    from rasterio.transform import from_origin
+
+    transform = from_origin(-1_000_000, 1_000_000, 2000, 2000)
+    center_x, center_y = transform * (25, 25)  # center of 50x50
+    reverse_transformer = Transformer.from_crs("EPSG:3413", "EPSG:4326", always_xy=True)
+    lon, lat = reverse_transformer.transform(center_x, center_y)
+
+    result = runner.invoke(
+        app,
+        [
+            "plot",
+            "horizon",
+            "--lat",
+            str(lat),
+            "--lon",
+            str(lon),
+            str(mock_horizon_file),
+            "--output-dir",
+            str(outdir),
+            "--filename",
+            custom_name,
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    out_file = outdir / custom_name
+    assert out_file.exists(), f"{out_file} was not created"
+
+
 # ---------------------------------------------------------------------------
 # Normals
 # ---------------------------------------------------------------------------
