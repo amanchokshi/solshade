@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from decimal import Decimal
 from pathlib import Path
@@ -13,12 +14,21 @@ from rich.console import Console
 from rich.markup import escape
 
 from solshade.irradiance import compute_energy_metrics, compute_flux_timeseries
-from solshade.solar import (
-    compute_solar_ephem,
-    solar_envelope_by_folding,
+from solshade.solar import compute_solar_ephem, solar_envelope_by_folding
+from solshade.terrain import (
+    compute_hillshade,
+    compute_horizon_map,
+    compute_slope_aspect_normals,
+    load_dem,
 )
-from solshade.terrain import compute_hillshade, compute_horizon_map, compute_slope_aspect_normals, load_dem
-from solshade.utils import parse_iso_utc, read_geotiff, transfer_spatial_metadata, write_geotiff
+from solshade.utils import (
+    configure_logging,
+    get_logger,
+    parse_iso_utc,
+    read_geotiff,
+    transfer_spatial_metadata,
+    write_geotiff,
+)
 from solshade.viz import (
     plot_aspect,
     plot_day_of_peak,
@@ -33,8 +43,39 @@ from solshade.viz import (
 
 console = Console()
 app = typer.Typer(help="Terrain-aware solar illumination modeling using DEMs and orbital solar geometry.")
+log = get_logger(__name__)
 
 
+# =========================
+# Global logging options
+# =========================
+@app.callback(invoke_without_command=False)
+def _configure_cli_logging(
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Increase verbosity (DEBUG). Default without this flag is INFO.",
+    ),
+    logfile: Optional[Path] = typer.Option(
+        None,
+        "--logfile",
+        help="If provided, also write logs to this file.",
+    ),
+):
+    """
+    Configure solshade logging for the CLI process via utils.configure_logging.
+    Default level is INFO; -v/--verbose switches to DEBUG. If --logfile is set,
+    logs are also written to that file.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    configure_logging(level=level, log_file=logfile)
+    log.debug("CLI logging configured (level=%s, logfile=%s)", logging.getLevelName(level), str(logfile) if logfile else "None")
+
+
+# =========================
+# META
+# =========================
 @app.command()
 def meta(dem_path: Path = typer.Argument(..., help="Path to the input DEM GeoTIFF.")):
     """A neat metadata summary from a DEM file."""
@@ -117,7 +158,8 @@ def compute_slope_cmd(
     out_path = outdir / (filename if filename else f"{dem_path.stem}_SLOPE.tif")
 
     slope_da.rio.to_raster(out_path)
-    typer.echo(f"Saved slope to {out_path}")
+    log.info(f"Saved slope to {out_path}")
+    typer.echo(" ")
 
 
 @compute_app.command("aspect")
@@ -139,7 +181,8 @@ def compute_aspect_cmd(
     out_path = outdir / (filename if filename else f"{dem_path.stem}_ASPECT.tif")
 
     aspect_da.rio.to_raster(out_path)
-    typer.echo(f"Saved aspect to {out_path}")
+    log.info(f"Saved aspect to {out_path}")
+    typer.echo(" ")
 
 
 @compute_app.command("normals")
@@ -161,7 +204,8 @@ def compute_normal_cmd(
     out_path = outdir / (filename if filename else f"{dem_path.stem}_NORMALS.tif")
 
     normal.rio.to_raster(out_path)
-    typer.echo(f"Saved normals to {out_path}")
+    log.info(f"Saved normals to {out_path}")
+    typer.echo(" ")
 
 
 @compute_app.command("hillshade")
@@ -187,7 +231,8 @@ def compute_hillshade_cmd(
     out_path = outdir / (filename if filename else default_name)
 
     hillshade_da.rio.to_raster(out_path)
-    typer.echo(f"Saved hillshade to {out_path}")
+    log.info(f"Saved hillshade to {out_path}")
+    typer.echo(" ")
 
 
 @compute_app.command("horizon")
@@ -224,7 +269,8 @@ def compute_horizon_cmd(
     out_path = outdir / (filename if filename else default_name)
 
     result.rio.to_raster(out_path)
-    typer.echo(f"Saved horizon map to {out_path}")
+    log.info(f"Saved horizon map to {out_path}")
+    typer.echo(" ")
 
 
 @compute_app.command("fluxseries")
@@ -254,29 +300,33 @@ def compute_fluxseries_cmd(
     output_dir = output_dir or dem_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    typer.echo(f"Computing flux timeseries from {dem_path.name} and {horizon_path.name}...")
+    log.info(f"Computing flux timeseries from {dem_path.name} and {horizon_path.name}...")
 
     dem = load_dem(dem_path)
     horizon = load_dem(horizon_path)
     slope, aspect, normal_enu = compute_slope_aspect_normals(dem)
 
-    # Determine lat/lon if not provided
+    # Derive lat/lon from DEM center if not provided
     if lat is None or lon is None:
-        # Get center pixel
         ny, nx = dem.shape[-2:]
-        center_y, center_x = ny // 2, nx // 2
-        x, y = dem.rio.transform() * (center_x + 0.5, center_y + 0.5)
-
-        # Convert to lat/lon if needed
-        if dem.rio.crs.to_epsg() != 4326:
+        cy, cx = ny // 2, nx // 2
+        x, y = dem.rio.transform() * (cx + 0.5, cy + 0.5)
+        if dem.rio.crs and dem.rio.crs.to_epsg() != 4326:
             transformer = Transformer.from_crs(dem.rio.crs, "EPSG:4326", always_xy=True)
-            lon, lat = transformer.transform(x, y)
+            lon_derived, lat_derived = transformer.transform(x, y)
         else:
-            lon, lat = x, y
+            lon_derived, lat_derived = x, y
+        lat_val: float = float(lat_derived)
+        lon_val: float = float(lon_derived)
+    else:
+        # lat/lon are already floats (but Optional in the signature), so narrow them
+        lat_val = float(lat)
+        lon_val = float(lon)
 
     times_utc, solar_alt, solar_az, sun_au, solar_enu = compute_solar_ephem(
-        lat=79.4, lon=-90.73, startutc=parse_iso_utc(start_utc), stoputc=parse_iso_utc(start_utc)
+        lat=lat_val, lon=lon_val, startutc=parse_iso_utc(start_utc), stoputc=parse_iso_utc(stop_utc)
     )
+
     flux = compute_flux_timeseries(
         horizon=horizon,
         sun_alt_deg=solar_alt,
@@ -289,7 +339,7 @@ def compute_fluxseries_cmd(
         n_jobs=n_jobs,
     )
 
-    typer.echo("Computing flux metrics")
+    log.info("Computing flux metrics")
     daily_energy, total_energy, peak_energy, day_of_peak = compute_energy_metrics(flux)
     daily_iso = np.datetime_as_string(daily_energy.time.astype("datetime64[s]"), unit="s", timezone="UTC").tolist()  # type: ignore
 
@@ -302,14 +352,16 @@ def compute_fluxseries_cmd(
         "day_of_peak": day_of_peak,
     }
 
-    # If --filename is provided, treat it as the base stem for all four outputs
+    # If --filename provided, treat it as the base stem for all outputs
     base_stem = Path(filename).stem if filename else dem_path.stem
 
     for xr_name, xr_array in data.items():
         out_path = (output_dir or horizon_path.parent) / f"{base_stem}_{xr_name.upper()}.tif"
         xr_array = transfer_spatial_metadata(xr_array, dem, attrs={"daily_iso_times": json.dumps(daily_iso)})
         write_geotiff(xr_array, str(out_path))
-        typer.echo(f"Saved {xr_name.upper()} map to {out_path}")
+        log.info(f"Saved {xr_name.upper()} map to {out_path}")
+
+    typer.echo(" ")
 
 
 # =========================
@@ -325,9 +377,7 @@ def plot_dem_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot the DEM with contours."""
@@ -339,7 +389,8 @@ def plot_dem_cmd(
         out_path = output_dir / (filename if filename else f"{dem_path.stem}_DEM.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved DEM plot to {out_path}")
+        log.info(f"Saved DEM plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -351,9 +402,7 @@ def plot_slope_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot the slope derived from a DEM."""
@@ -366,7 +415,8 @@ def plot_slope_cmd(
         out_path = output_dir / (filename if filename else f"{dem_path.stem}_SLOPE.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved slope plot to {out_path}")
+        log.info(f"Saved slope plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -378,9 +428,7 @@ def plot_aspect_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot the aspect derived from a DEM."""
@@ -393,7 +441,8 @@ def plot_aspect_cmd(
         out_path = output_dir / (filename if filename else f"{dem_path.stem}_ASPECT.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved aspect plot to {out_path}")
+        log.info(f"Saved aspect plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -405,9 +454,7 @@ def plot_normals_cmd(
     dem_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot RGB map of ENU normals derived from a DEM."""
@@ -420,7 +467,8 @@ def plot_normals_cmd(
         out_path = output_dir / (filename if filename else f"{dem_path.stem}_NORMALS.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved normals plot to {out_path}")
+        log.info(f"Saved normals plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -434,9 +482,7 @@ def plot_hillshade_cmd(
     altitude: float = typer.Option(45.0, help="Sun altitude in degrees."),
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot hillshade from a DEM using specified illumination angles."""
@@ -450,7 +496,8 @@ def plot_hillshade_cmd(
         out_path = output_dir / (filename if filename else default_name)
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved hillshade plot to {out_path}")
+        log.info(f"Saved hillshade plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -469,9 +516,7 @@ def plot_horizon_cmd(
     timestep: int = typer.Option(3600, help="Sampling step (seconds) for solar calculation."),
     cache_dir: Optional[Path] = typer.Option(None, help="Skyfield cache directory (defaults to ./data/skyfield)."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot polar horizon profile at specified lat/lon from a HORIZON_*.tif.
@@ -534,7 +579,8 @@ def plot_horizon_cmd(
             else:
                 out_path = output_dir / f"{horizon_path.stem}_{lat:.8f}_{lon:.8f}.png"
         plt.savefig(out_path)
-        typer.echo(f"Saved horizon polar plot to {out_path}")
+        log.info(f"Saved horizon polar plot to {out_path}")
+        typer.echo(" ")
     else:
         if not os.getenv("SOLSHADE_TEST_MODE"):
             plt.show()  # pragma: no cover
@@ -545,9 +591,7 @@ def plot_total_energy_cmd(
     total_energy_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot total energy map."""
@@ -559,7 +603,8 @@ def plot_total_energy_cmd(
         out_path = output_dir / (filename if filename else f"{total_energy_path.stem}_TOTAL_ENERGY.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved TOTAL ENERGY plot to {out_path}")
+        log.info(f"Saved TOTAL ENERGY plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -571,9 +616,7 @@ def plot_peak_energy_cmd(
     peak_energy_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot peak energy map."""
@@ -585,7 +628,8 @@ def plot_peak_energy_cmd(
         out_path = output_dir / (filename if filename else f"{peak_energy_path.stem}_PEAK_ENERGY.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved PEAK ENERGY plot to {out_path}")
+        log.info(f"Saved PEAK ENERGY plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):
@@ -597,9 +641,7 @@ def plot_dop_cmd(
     day_of_peak_path: Path,
     output_dir: Optional[Path] = typer.Option(None, help="Save plot to this directory."),
     filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        help="Custom output tif/png filename for compute/plot commands respectively.",
+        None, "--filename", help="Custom output tif/png filename for compute/plot commands respectively."
     ),
 ):
     """Plot day of peak map."""
@@ -613,7 +655,8 @@ def plot_dop_cmd(
         out_path = output_dir / (filename if filename else f"{day_of_peak_path.stem}_DAY_OF_PEAK.png")
         plt.tight_layout()
         plt.savefig(out_path)
-        typer.echo(f"Saved DAY OF PEAK plot to {out_path}")
+        log.info(f"Saved DAY OF PEAK plot to {out_path}")
+        typer.echo(" ")
     else:
         plt.tight_layout()
         if not os.getenv("SOLSHADE_TEST_MODE"):

@@ -10,6 +10,9 @@ from matplotlib.axes import Axes
 from matplotlib.colors import BoundaryNorm, Colormap, ListedColormap, to_rgba
 
 from solshade.terrain import compute_hillshade
+from solshade.utils import get_logger
+
+log = get_logger(__name__)
 
 
 def truncate_colormap(
@@ -39,9 +42,12 @@ def truncate_colormap(
     -----
     - Preserves the base colormap's special colors: 'bad', 'under', and 'over'.
     """
+    log.debug("truncate_colormap(cmap=%r, vmin=%s, vmax=%s, n=%s)", cmap, vmin, vmax, n)
+
     # Resolve cmap
     if isinstance(cmap, str):
         cmap = plt.get_cmap(cmap)
+        log.debug("Resolved string cmap to Colormap: %s", cmap.name)
 
     # STRICT validation (no pre-clipping)
     if not (0.0 <= vmin < vmax <= 1.0):
@@ -61,6 +67,7 @@ def truncate_colormap(
     if hasattr(cmap, "_rgba_over") and getattr(cmap, "_rgba_over") is not None:
         new.set_over(getattr(cmap, "_rgba_over"))
 
+    log.debug("Created truncated colormap: %s", new.name)
     return new
 
 
@@ -114,16 +121,24 @@ def mirrored_discrete_doy_cmap(
     lo_med_hi : tuple[int, int, int]
         The (lo, median, hi) integers used to build the bins.
     """
+    log.debug(
+        "mirrored_discrete_doy_cmap(sigma=%s, cmap=%r, center_color=%r, clip_to_data=%s, lo_hi=%r)",
+        sigma,
+        cmap,
+        center_color,
+        clip_to_data,
+        lo_hi,
+    )
+
     a = np.asarray(doy_values)
     finite = np.isfinite(a)
     if not np.any(finite):
         raise ValueError("No finite values in `doy_values`.")
-    if isinstance(cmap, str):
-        base = plt.get_cmap(cmap)
-    else:
-        base = cmap
 
+    base = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
     med = int(np.rint(np.nanmedian(a[finite])))
+    log.debug("Computed median DoY: %d", med)
+
     if lo_hi is None:
         std = float(np.nanstd(a[finite]))
         if std == 0:
@@ -137,34 +152,28 @@ def mirrored_discrete_doy_cmap(
             dmax = int(np.ceil(np.nanmax(a[finite])))
             lo = max(lo, dmin)
             hi = min(hi, dmax)
+        log.debug("Derived lo/hi from stats: lo=%d, hi=%d (std=%.3f)", lo, hi, std)
     else:
         lo, hi = map(int, lo_hi)
+        log.debug("Using explicit lo_hi: lo=%d, hi=%d", lo, hi)
 
     # Ensure [lo, hi] brackets the median and yields an odd bin count
     if hi <= med:
         hi = med + 1
     if lo >= med:
         lo = med - 1
-    # bins = (hi - lo + 1) == n_low + 1 + n_high
-    if ((hi - lo + 1) % 2) == 0:  # even -> expand to make it odd
-        # Prefer expanding toward available data high side if possible
+    if ((hi - lo + 1) % 2) == 0:
         hi += 1
+    n_low = max(med - lo, 1)
+    n_high = max(hi - med, 1)
 
-    n_low = med - lo
-    n_high = hi - med
-    # Defensive: ensure at least one bin on each side
-    n_low = max(n_low, 1)
-    n_high = max(n_high, 1)
-
-    # Sample halves safely (no indexing off-by-one)
-    # Low side: n_low samples in [0.0, 0.5), reversed so center-adjacent is darker
+    # Sample halves safely
     if n_low == 1:
         low_grid = np.array([0.25])
     else:
         low_grid = np.linspace(0.0, 0.5, n_low, endpoint=False)
     low_half = base(low_grid)[::-1]
 
-    # High side: n_high samples in (0.5, 1.0], reversed so center-adjacent is darker
     if n_high == 1:
         high_grid = np.array([0.75])
     else:
@@ -181,10 +190,15 @@ def mirrored_discrete_doy_cmap(
     if over_color is not None:
         listed.set_over(over_color)
 
-    # Half-integer boundaries so integer DoY values are centered in bins
     boundaries = np.arange(lo - 0.5, hi + 1.5, 1.0, dtype=float)
     norm = BoundaryNorm(boundaries, ncolors=listed.N, clip=False)
 
+    log.debug(
+        "Built mirrored discrete cmap with %d bins, boundaries [%s..%s]",
+        listed.N,
+        f"{boundaries[0]:.1f}",
+        f"{boundaries[-1]:.1f}",
+    )
     return listed, norm, boundaries, (lo, med, hi)
 
 
@@ -202,12 +216,14 @@ def _get_extent(data: xr.DataArray) -> tuple[float, float, float, float]:
     extent : tuple[float, float, float, float]
         The extent in the format (xmin, xmax, ymin, ymax), suitable for imshow().
     """
-    return (
+    extent = (
         float(data.x.min()),
         float(data.x.max()),
         float(data.y.min()),
         float(data.y.max()),
     )
+    log.debug("Computed extent: %s", extent)
+    return extent
 
 
 def plot_dem(dem: xr.DataArray, ax: Axes | None = None) -> Axes:
@@ -226,6 +242,7 @@ def plot_dem(dem: xr.DataArray, ax: Axes | None = None) -> Axes:
     ax : matplotlib.axes.Axes
         The axis containing the DEM plot.
     """
+    log.debug("plot_dem called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -257,6 +274,7 @@ def plot_slope(slope: xr.DataArray, ax: Axes | None = None) -> Axes:
     ax : matplotlib.axes.Axes
         The axis containing the slope plot.
     """
+    log.debug("plot_slope called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -285,6 +303,7 @@ def plot_aspect(aspect: xr.DataArray, ax: Axes | None = None) -> Axes:
     ax : matplotlib.axes.Axes
         The axis containing the aspect plot.
     """
+    log.debug("plot_aspect called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -313,6 +332,7 @@ def plot_normals(normals_enu: xr.DataArray, ax: Axes | None = None) -> Axes:
     ax : matplotlib.axes.Axes
         The axis containing the aspect plot.
     """
+    log.debug("plot_normals called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -354,6 +374,12 @@ def plot_hillshade(
     ax : matplotlib.axes.Axes
         The axis containing the hillshade plot.
     """
+    log.debug(
+        "plot_hillshade called; ax is None=%s, azimuth_deg=%.2f, altitude_deg=%.2f",
+        ax is None,
+        azimuth_deg,
+        altitude_deg,
+    )
     if ax is None:
         _, ax = plt.subplots()
 
@@ -401,9 +427,11 @@ def plot_horizon_polar(
     ax : matplotlib.axes.PolarAxes
         The axis with the plotted horizon profile (and optional solar envelope).
     """
-    import cmasher as cmr
-    import matplotlib.pyplot as plt
-    import numpy as np
+    log.debug(
+        "plot_horizon_polar called; ax is None=%s, have_solar=%s",
+        ax is None,
+        (sunaz is not None and (sunaltmin is not None or sunaltmax is not None)),
+    )
 
     if ax is None:
         _, ax = plt.subplots(subplot_kw={"projection": "polar"})
@@ -544,6 +572,7 @@ def plot_horizon_polar(
     ax.set_xticklabels([])  # hide default angle numbers
     ax.grid(ls=":", lw=0.7, zorder=7)
 
+    log.debug("Finished plot_horizon_polar with rlim=(%.2f, %.2f)", rmin - 10.0, rmax + pad)
     return ax
 
 
@@ -562,6 +591,7 @@ def plot_total_energy(total_energy: xr.DataArray, ax: Axes | None = None) -> Axe
     -------
     ax : matplotlib.axes.Axes
     """
+    log.debug("plot_total_energy called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -595,6 +625,7 @@ def plot_peak_energy(peak_energy: xr.DataArray, ax: Axes | None = None) -> Axes:
     -------
     ax : matplotlib.axes.Axes
     """
+    log.debug("plot_peak_energy called; ax is None=%s", ax is None)
     if ax is None:
         _, ax = plt.subplots()
 
@@ -640,6 +671,12 @@ def plot_day_of_peak(
     -------
     ax : matplotlib.axes.Axes
     """
+    log.debug(
+        "plot_day_of_peak called; ax is None=%s, sigma=%s, cmap_base=%r",
+        ax is None,
+        sigma,
+        getattr(cmap_base, "name", cmap_base),
+    )
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 5))
 

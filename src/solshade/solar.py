@@ -7,6 +7,10 @@ from scipy.interpolate import CubicSpline
 from skyfield.api import Loader, wgs84
 from skyfield.timelib import Timescale
 
+from solshade.utils import get_logger
+
+log = get_logger(__name__)
+
 # Skyfield object types are a bit loose; use "object" for now.
 SunSegment = object
 EarthSegment = object
@@ -42,30 +46,40 @@ def load_sun_ephemeris(
     - Uses the compact DE440s kernel (sufficient for Sun/Earth work).
     - You must run once with internet access to populate the Skyfield cache,
       or manually place 'de440s.bsp' and timescale data in the cache_dir.
+
+    Logging
+    -------
+    - INFO: confirms successful loading of ephemeris/timescale.
+    - ERROR: missing files raise exceptions.
     """
     eph_name = "de440s.bsp"
     cache_root = Path(cache_dir) if cache_dir is not None else Path("data/skyfield")
     cache_root.mkdir(parents=True, exist_ok=True)
     loader = Loader(str(cache_root))
 
+    log.debug(f"Loading Skyfield ephemeris from cache {cache_root}")
+
     # Load timescale
     try:
         ts = loader.timescale()
     except Exception as exc:
+        log.error(f"Timescale not found in Skyfield cache {cache_root}")
         raise FileNotFoundError(
-            f"Timescale data not found in Skyfield cache ({cache_root}).\n"
-            f"Run once with internet or manually copy the required files."
+            f"Timescale data not found in Skyfield cache ({cache_root}). "
+            "Run once with internet or manually copy the required files."
         ) from exc
 
     # Load ephemeris
     try:
         ephem = loader(eph_name)
     except Exception as exc:
+        log.error(f"Ephemeris {eph_name} not found in {cache_root}")
         raise FileNotFoundError(
-            f"Ephemeris '{eph_name}' not found in Skyfield cache ({cache_root}).\n"
-            f"Run once with internet or manually copy the BSP file."
+            f"Ephemeris '{eph_name}' not found in Skyfield cache ({cache_root}). "
+            "Run once with internet or manually copy the BSP file."
         ) from exc
 
+    log.info(f"Loaded ephemeris {eph_name} and timescale from {cache_root}")
     sun = ephem["sun"]
     earth = ephem["earth"]
     return sun, earth, ts
@@ -110,7 +124,7 @@ def compute_solar_ephem(
         Apparent altitude (degrees). No atmospheric refraction applied.
     az_deg : ndarray of float, shape (N,)
         Apparent azimuth (degrees), clockwise from true north, wrapped to [0, 360).
-    dist_au : ndarray of fload, shape (N,)
+    dist_au : ndarray of float, shape (N,)
         Apparent distance between observer and Sun in astronomical units
     enu_unit : ndarray of float, shape (N, 3)
         Unit vectors pointing from the site toward the Sun in local ENU coordinates
@@ -134,6 +148,11 @@ def compute_solar_ephem(
           U = sin(alt)
 
       where azimuth is CW from north (Skyfield’s default for topocentric alt/az).
+
+    Logging
+    -------
+    - INFO: parameters (lat/lon, duration, timestep).
+    - DEBUG: step counts, times constructed, ENU unit vector shape.
     """
 
     def ensure_utc(dt: datetime) -> datetime:
@@ -141,25 +160,25 @@ def compute_solar_ephem(
             return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
 
-    # ---- Time range & validation ----
     start_of_year_utc = datetime(datetime.now(timezone.utc).year, 1, 1, tzinfo=timezone.utc)
     start_dt = ensure_utc(startutc) if startutc else start_of_year_utc
     stop_dt = ensure_utc(stoputc) if stoputc else (start_of_year_utc + timedelta(days=365))
 
     if timestep <= 0:
+        log.error("timestep must be positive")
         raise ValueError("timestep must be a positive number of seconds")
     if stop_dt <= start_dt:
+        log.error("stoputc must be after startutc")
         raise ValueError("stoputc must be after startutc")
 
-    # Build time vector for Skyfield (aware) and for return (datetime64[ns])
     total_seconds = int((stop_dt - start_dt).total_seconds())
     steps = total_seconds // timestep
-    offsets = np.arange(0, steps * timestep + 1, timestep, dtype="int64")
+    log.info(f"Computing solar ephemeris lat={lat:.3f}, lon={lon:.3f}, span={stop_dt - start_dt}, steps={steps}")
 
-    times_py = [start_dt + timedelta(seconds=int(s)) for s in offsets]  # tz-aware
+    offsets = np.arange(0, steps * timestep + 1, timestep, dtype="int64")
+    times_py = [start_dt + timedelta(seconds=int(s)) for s in offsets]
     times_utc = np.array([t.replace(tzinfo=None) for t in times_py], dtype="datetime64[ns]")
 
-    # ---- Skyfield apparent topocentric alt/az ----
     sun, earth, ts = load_sun_ephemeris(cache_dir)
     t = ts.from_datetimes(times_py)
 
@@ -171,7 +190,6 @@ def compute_solar_ephem(
     alt_deg = np.asarray(alt.degrees, dtype=float)
     az_deg = np.asarray(np.mod(az.degrees, 360.0), dtype=float)
 
-    # ---- Direct ENU unit vector from (alt, az) ----
     alt_rad = np.deg2rad(alt_deg)
     az_rad = np.deg2rad(az_deg)
 
@@ -185,6 +203,7 @@ def compute_solar_ephem(
         axis=1,
     ).astype(float)
 
+    log.debug(f"Computed ENU unit vectors of shape {enu_unit.shape}")
     return times_utc, alt_deg, az_deg, dist_au, enu_unit
 
 
@@ -227,8 +246,13 @@ def solar_envelope_by_folding(
         - Non-uniform sampling cadence, or cadence that doesn't divide 86400 s
         - Not enough samples for one full day
         - <4 unique azimuth samples for cubic spline
+
+    Logging
+    -------
+    - DEBUG: input sizes, cadence, slots per day.
+    - INFO: completion and output grid length.
     """
-    # ---- basic checks ----
+    log.debug("Building solar envelope by folding")
     if alt_deg.shape != az_deg.shape:
         raise ValueError("alt_deg and az_deg must have the same shape.")
     if alt_deg.ndim != 1:
@@ -240,9 +264,8 @@ def solar_envelope_by_folding(
     if n < 2:
         raise ValueError("Need at least two samples to infer cadence.")
 
-    # ---- infer cadence from times_utc ----
     t_sec = times_utc.astype("datetime64[s]")
-    diffs = np.diff(t_sec.astype("int64"))  # seconds between samples
+    diffs = np.diff(t_sec.astype("int64"))
     step_s = int(diffs[0])
     if step_s <= 0:
         raise ValueError("Non-positive timestep inferred from times_utc.")
@@ -252,8 +275,8 @@ def solar_envelope_by_folding(
         raise ValueError(f"Inferred cadence {step_s}s does not divide 86400s.")
 
     slots_per_day = 86400 // step_s
+    log.debug(f"Inferred cadence={step_s}s, slots_per_day={slots_per_day}")
 
-    # ---- truncate to whole days and reshape ----
     n_complete = (n // slots_per_day) * slots_per_day
     if n_complete == 0:
         raise ValueError("Not enough samples for a single complete day.")
@@ -262,10 +285,11 @@ def solar_envelope_by_folding(
     az = np.mod(np.asarray(az_deg[:n_complete], dtype=float), 360.0)
 
     n_days = n_complete // slots_per_day
+    log.debug(f"Using {n_days} full days of data ({n_complete} samples)")
+
     alt_2d = alt.reshape(n_days, slots_per_day)
     az_2d = az.reshape(n_days, slots_per_day)
 
-    # ---- per-slot extrema (vectorized) ----
     cols = np.arange(slots_per_day)
     idx_min = np.argmin(alt_2d, axis=0)
     idx_max = np.argmax(alt_2d, axis=0)
@@ -275,7 +299,6 @@ def solar_envelope_by_folding(
     slot_max_alt = alt_2d[idx_max, cols]
     slot_max_az = az_2d[idx_max, cols]
 
-    # ---- periodic cubic spline fit ----
     if smooth_n < 4:
         raise ValueError("smooth_n must be >= 4 for cubic spline fitting.")
 
@@ -291,7 +314,6 @@ def solar_envelope_by_folding(
         if xu.size < 4:
             raise ValueError("Not enough unique azimuth samples for cubic spline.")
 
-        # wrap endpoint to enforce periodic continuity
         xw = np.concatenate([xu, [xu[0] + 360.0]])
         yw = np.concatenate([yu, [yu[0]]])
 
@@ -301,11 +323,11 @@ def solar_envelope_by_folding(
     min_alt_smooth = _periodic_cubic(slot_min_az, slot_min_alt)
     max_alt_smooth = _periodic_cubic(slot_max_az, slot_max_alt)
 
-    # ---- close the curves for continuous plotting ----
     az_plot = np.append(az_smooth, 360.0)
     alt_min_plot = np.append(min_alt_smooth, min_alt_smooth[0])
     alt_max_plot = np.append(max_alt_smooth, max_alt_smooth[0])
 
+    log.info(f"Solar envelope built: smooth_n={smooth_n}, output grid length={az_plot.size}")
     return az_plot, alt_min_plot, alt_max_plot
 
 
@@ -328,9 +350,14 @@ def nearest_horizon_indices(
     -------
     idx : np.ndarray, shape (M,)
         Indices into ``horizon_az_deg`` of the nearest azimuth for each sun azimuth.
+
+    Logging
+    -------
+    - DEBUG: reports horizon spacing and input count.
     """
     n = horizon_az_deg.size
     step = 360.0 / n
+    log.debug(f"Mapping {sun_az_deg.size} solar azimuths to {n} horizon directions (step={step:.2f}°)")
     sun_wrapped = np.mod(sun_az_deg, 360.0)
     idx = np.rint(sun_wrapped / step).astype(int) % n
     return idx

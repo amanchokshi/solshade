@@ -12,6 +12,10 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from scipy.interpolate import CubicSpline, interp1d
 from scipy.ndimage import map_coordinates
 
+from solshade.utils import get_logger
+
+log = get_logger(__name__)
+
 
 def load_dem(path: str | Path) -> xr.DataArray:
     """
@@ -41,13 +45,23 @@ def load_dem(path: str | Path) -> xr.DataArray:
     - Elevation units are inherited from the input file (typically meters).
     - The spatial reference (CRS) must be projected (not geographic/latlon).
     - Squeezes band dimension if present.
+    - Logging: this function logs basic file/metadata information at INFO level.
     """
+    log.debug(f"Loading DEM from {path}")
     raw = cast(xr.Dataset, rxr.open_rasterio(path, masked=True))
     squeezed = raw.squeeze()
 
     if not isinstance(squeezed, xr.DataArray):
+        log.error(f"DEM at {path} has multiple bands or is not a DataArray")
         raise TypeError("DEM is not a single-band raster.")
 
+    try:
+        crs_str = squeezed.rio.crs.to_string() if squeezed.rio.crs else "None"
+        res = squeezed.rio.resolution()
+    except Exception:  # pragma: no cover (very defensive)
+        crs_str, res = "Unknown", ("?", "?")
+
+    log.info(f"Loaded DEM: shape={squeezed.shape}, CRS={crs_str}, resolution={res}")
     return squeezed
 
 
@@ -81,11 +95,18 @@ def compute_slope_aspect_normals(
         E = sin(slope) * sin(aspect)
         N = sin(slope) * cos(aspect)
         U = cos(slope)
+
+    Logging
+    -------
+    - DEBUG: DEM shape and pixel resolution.
+    - INFO: completion of slope/aspect/normal computation.
     """
+    log.debug(f"Computing slope/aspect/normals for DEM with shape={dem.shape}")
     z = dem.values
     dy, dx = dem.rio.resolution()
     dx = abs(dx)
     dy = abs(dy)
+    log.debug(f"DEM resolution: dx={dx:.6f}, dy={dy:.6f}")
 
     dzdy, dzdx = np.gradient(z, dy, dx)
 
@@ -131,6 +152,7 @@ def compute_slope_aspect_normals(
         attrs={"description": "Terrain normal unit vector in ENU coordinates"},
     )
 
+    log.info("Computed slope/aspect/normals")
     return slope, aspect, normal_enu
 
 
@@ -164,7 +186,13 @@ def compute_hillshade(
     -----
     - Uses a Lambertian reflection model.
     - All input and output arrays are 2D.
+
+    Logging
+    -------
+    - DEBUG: sun azimuth/altitude inputs.
+    - INFO: completion of hillshade.
     """
+    log.debug(f"Computing hillshade: azimuth={azimuth_deg:.2f}°, altitude={altitude_deg:.2f}°")
     slope_rad = np.radians(slope)
     aspect_rad = np.radians(aspect)
     az_rad = np.radians(azimuth_deg)
@@ -173,6 +201,7 @@ def compute_hillshade(
     shaded = np.sin(alt_rad) * np.cos(slope_rad) + np.cos(alt_rad) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad)
     hillshade = np.clip(shaded, 0, 1)
 
+    log.info("Computed hillshade")
     return xr.DataArray(
         hillshade,
         coords=slope.coords,
@@ -228,13 +257,31 @@ def compute_horizon_map(
         A 3D xarray DataArray with dimensions (azimuth, y, x), representing
         the local horizon angle (in degrees) in each direction for each pixel.
         The azimuthal directions are stored in the `azimuth` coordinate.
+
+    Logging
+    -------
+    - INFO: parameters used and final shape.
+    - DEBUG: chunking details, dispatching jobs, pixel sizes.
+    - WARN: defensive warnings if a None chunk were returned.
     """
     if dem.rio.crs is None or dem.rio.transform() is None:
+        log.error("DEM missing CRS or affine transform")
         raise ValueError("DEM must have CRS and affine transform defined.")
+
+    log.info(
+        "Computing horizon map (n_directions=%d, max_distance=%.1f, step=%.1f, chunk_size=%d, n_jobs=%d, progress=%s)",
+        n_directions,
+        max_distance,
+        step,
+        chunk_size,
+        n_jobs,
+        progress,
+    )
 
     transform = dem.rio.transform()
     res_x, res_y = transform.a, -transform.e
     ny, nx = dem.shape
+    log.debug(f"DEM size: nx={nx}, ny={ny}; pixel size: ({res_x:.6f}, {res_y:.6f})")
 
     azimuths = np.linspace(0, 360, n_directions, endpoint=False)
     distances = np.arange(0, max_distance + step, step)
@@ -291,6 +338,7 @@ def compute_horizon_map(
         return y0, y1, x0, x1, chunk_out
 
     tasks = [(x0, y0) for y0 in range(0, ny, chunk_size) for x0 in range(0, nx, chunk_size)]
+    log.debug(f"Prepared {len(tasks)} chunks")
     horizon_data = np.full((n_directions, ny, nx), np.nan, dtype=np.float32)
 
     warnings.filterwarnings(
@@ -300,6 +348,7 @@ def compute_horizon_map(
     def run_all():
         return Parallel(n_jobs=n_jobs, return_as="generator")(delayed(process_chunk)(x0, y0) for x0, y0 in tasks)
 
+    log.debug(f"Dispatching {len(tasks)} jobs with n_jobs={n_jobs}")
     if progress:
         with Progress(
             SpinnerColumn(),
@@ -315,12 +364,16 @@ def compute_horizon_map(
                 if result is not None:
                     y0, y1, x0, x1, chunk = result
                     horizon_data[:, y0:y1, x0:x1] = np.moveaxis(chunk, -1, 0)
+                else:  # pragma: no cover (defensive)
+                    log.warning("Received None result for a chunk")
                 bar.advance(task_id)
     else:
         for result in run_all():
             if result is not None:
                 y0, y1, x0, x1, chunk = result
                 horizon_data[:, y0:y1, x0:x1] = np.moveaxis(chunk, -1, 0)
+            else:  # pragma: no cover (defensive)
+                log.warning("Received None result for a chunk (no-progress mode)")
 
     horizon_da = xr.DataArray(
         horizon_data,
@@ -342,6 +395,7 @@ def compute_horizon_map(
         }
     )
 
+    log.info(f"Horizon map computed: shape={horizon_da.shape} (azimuth,y,x) with {n_directions} directions")
     return horizon_da
 
 
@@ -370,22 +424,36 @@ def horizon_interp(
     interp_func : callable or None
         A function that takes azimuth(s) in degrees and returns interpolated
         horizon angle(s). Returns None if no valid data.
+
+    Logging
+    -------
+    - DEBUG: data completeness, ranges, and interpolation path taken.
+    - INFO: chosen interpolation (cubic vs linear) and output range when applicable.
+    - WARN: cubic spline unphysical output fallback.
     """
+    log.debug(f"Building horizon interpolation (fallback_frac={fallback_frac:.2f})")
     az_valid = azimuths[~np.isnan(horizon_vals)]
     vals_valid = horizon_vals[~np.isnan(horizon_vals)]
 
     if len(vals_valid) == 0:
-        print("No valid horizon data — returning None.")
+        log.info("No valid horizon data — returning None.")
         return None
 
     nan_frac = np.isnan(horizon_vals).sum() / len(horizon_vals)
-    print(f"Valid points: {len(vals_valid)} / {len(horizon_vals)} ({(1 - nan_frac) * 100:.1f}% valid)")
-    print(f"Azimuth domain: {az_valid.min():.2f} to {az_valid.max():.2f}")
-    print(f"Value domain: {vals_valid.min():.2f} to {vals_valid.max():.2f}")
+    log.debug(
+        "Valid points: %d / %d (%.1f%% valid); azimuth range=[%.2f, %.2f]; value range=[%.2f, %.2f]",
+        len(vals_valid),
+        len(horizon_vals),
+        (1 - nan_frac) * 100,
+        float(az_valid.min()),
+        float(az_valid.max()),
+        float(vals_valid.min()),
+        float(vals_valid.max()),
+    )
 
     # Enforce periodicity only if we already have a valid value at 0.0 deg
     if az_valid[0] == 0.0:
-        print("Copying value at 0.0 deg to enforce periodicity at 360.0 deg.")
+        log.debug("Enforcing periodicity by copying value at 0.0° to 360.0°")
         az_valid = np.append(az_valid, 360.0)
         vals_valid = np.append(vals_valid, vals_valid[0])
 
@@ -397,13 +465,14 @@ def horizon_interp(
             min_val, max_val = np.nanmin(test_vals), np.nanmax(test_vals)
 
             if min_val < -90 or max_val > 90:
-                print(f"CubicSpline produced unphysical output: min={min_val:.2f}, max={max_val:.2f}")
+                log.warning(
+                    f"CubicSpline produced unphysical output: min={min_val:.2f}, max={max_val:.2f} — falling back to linear"
+                )
                 raise ValueError("Unphysical cubic spline result")
 
-            print(f"Using CubicSpline interpolation. Output range: [{min_val:.2f}, {max_val:.2f}]")
+            log.info(f"Using CubicSpline interpolation; output range=[{min_val:.2f}, {max_val:.2f}]")
         except Exception as e:
-            print(f"CubicSpline interpolation failed: {e}")
-            print("Falling back to interp1d.")
+            log.debug(f"CubicSpline interpolation failed: {e} — using linear interp1d")
             interp_func = interp1d(
                 az_valid,
                 vals_valid,
@@ -412,7 +481,7 @@ def horizon_interp(
                 fill_value="extrapolate",  # type: ignore[arg-type]
             )
     else:
-        print("Too many NaNs — using interp1d.")
+        log.info(f"Too many NaNs ({nan_frac * 100:.1f}%) — using linear interp1d")
         interp_func = interp1d(
             az_valid,
             vals_valid,

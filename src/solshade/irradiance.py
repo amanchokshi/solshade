@@ -16,6 +16,9 @@ from rich.progress import (
 )
 
 from solshade.solar import nearest_horizon_indices
+from solshade.utils import get_logger
+
+log = get_logger(__name__)
 
 
 @njit(parallel=False)  # pragma: no cover
@@ -171,34 +174,46 @@ def compute_flux_timeseries(
         On mismatched shapes, missing dims or missing attributes
     KeyError
         If `normal_enu` lacks bands "east","north","up".
+
+    Logging
+    -------
+    - INFO: Problem size and parallel execution parameters.
+    - DEBUG: shape checks, dtype casting, AU scaling, batching progress.
     """
+    # Validate horizon dims
     az_dim = "azimuth" if "azimuth" in horizon.dims else ("band" if "band" in horizon.dims else None)
     if az_dim is None:
+        log.error("`horizon` missing 'azimuth'/'band' dimension")
         raise ValueError("`horizon` must have a leading 'azimuth' or 'band' dimension.")
     if not {"y", "x"}.issubset(horizon.dims):
+        log.error("`horizon` missing spatial dims")
         raise ValueError("`horizon` must have spatial dims ('y','x').")
     if not {"band", "y", "x"}.issubset(normal_enu.dims):
+        log.error("`normal_enu` missing required dims ('band','y','x')")
         raise ValueError("`normal_enu` must have dims ('band','y','x').")
 
     # horizon azimuths must be present in attrs
     try:
         horizon_az_deg = np.asarray(json.loads(horizon.attrs["azimuths_deg"]), dtype=float)
     except Exception as exc:  # noqa: BLE001
+        log.error("`horizon` missing attrs['azimuths_deg']")
         raise ValueError("`horizon` is missing attrs['azimuths_deg'] with uniform azimuth samples.") from exc
 
     y_dim, x_dim = horizon.sizes["y"], horizon.sizes["x"]
     n_times = int(sun_alt_deg.size)
     if sun_az_deg.size != n_times or sun_enu.shape != (n_times, 3):
+        log.error("Length mismatch among sun_alt_deg, sun_az_deg, and sun_enu")
         raise ValueError("Length mismatch among sun_alt_deg, sun_az_deg, and sun_enu.")
 
     # validate sun_au
     sun_au = np.asarray(sun_au, dtype=np.float32)
     if sun_au.shape != (n_times,):
+        log.error("`sun_au` wrong shape: %s", sun_au.shape)
         raise ValueError("`sun_au` must have shape (T,) matching time axis.")
     if not np.isfinite(sun_au).all():
+        log.error("`sun_au` contains non-finite values")
         raise ValueError("`sun_au` contains non-finite values.")
-    # prevent division by zero/negatives; AU should be ~[0.983.., 1.017..]
-    sun_au = np.maximum(sun_au, np.float32(1e-6))
+    sun_au = np.maximum(sun_au, np.float32(1e-6))  # guard
 
     # Extract normals; cast once to target dtype & ensure contiguity.
     try:
@@ -206,10 +221,16 @@ def compute_flux_timeseries(
         n = np.ascontiguousarray(normal_enu.sel(band="north").values, dtype=dtype)
         u = np.ascontiguousarray(normal_enu.sel(band="up").values, dtype=dtype)
     except Exception as exc:  # noqa: BLE001
+        log.error("`normal_enu` must contain bands ['east','north','up']")
         raise KeyError("`normal_enu` must contain bands ['east','north','up'].") from exc
 
     horizon_np = np.ascontiguousarray(horizon.values)
     az_idx = nearest_horizon_indices(sun_az_deg, horizon_az_deg)
+
+    log.info(
+        f"Flux timeseries: T={n_times}, grid=({y_dim}x{x_dim}), dtype={dtype}, "
+        f"n_jobs={n_jobs}, batch_size={batch_size}, backend={backend}, prefer={prefer}"
+    )
 
     flux_data = np.empty((n_times, y_dim, x_dim), dtype=dtype)
 
@@ -219,9 +240,11 @@ def compute_flux_timeseries(
     if isinstance(times_utc, np.ndarray) and np.issubdtype(times_utc.dtype, np.datetime64):
         time_coord = times_utc.astype("datetime64[s]")
         time_iso = np.datetime_as_string(time_coord, unit="s", timezone="UTC").tolist()  # type: ignore
+        log.debug("Attached time coordinate with %d samples", time_coord.size)
 
     # 1/r^2 scaling per time (float32 to match inner ops)
     toa_scaled = np.asarray(toa, dtype=np.float32) / (sun_au**2)
+    log.debug("Prepared TOA scaling with AU^-2; range: [%.6f, %.6f]", float(toa_scaled.min()), float(toa_scaled.max()))
 
     def compute_single(t: int) -> Tuple[int, np.ndarray]:
         h_slice = np.ascontiguousarray(horizon_np[az_idx[t]].astype(dtype, copy=False))
@@ -239,14 +262,14 @@ def compute_flux_timeseries(
         )
         return t, res
 
+    log.debug("Dispatching batch of %d timesteps", batch_size)
     with Progress(
         SpinnerColumn(),
-        TextColumn("[bold green]Computing irradiance"),
+        TextColumn("[bold blue]Computing irradiance"),
         BarColumn(),
         "[progress.percentage]{task.percentage:>3.0f}%",
         TimeElapsedColumn(),
         TimeRemainingColumn(),
-        transient=True,
     ) as bar:
         task = bar.add_task("irradiance", total=n_times)
         for batch in chunked(range(n_times), batch_size):
@@ -262,6 +285,8 @@ def compute_flux_timeseries(
     }
     if time_iso is not None:
         attrs["time_utc_iso"] = json.dumps(time_iso)
+
+    log.info("Flux timeseries computed: shape=%s, dtype=%s", flux_data.shape, flux_data.dtype)
 
     return xr.DataArray(
         flux_data,
@@ -291,7 +316,13 @@ def compute_energy_metrics(flux: xr.DataArray) -> tuple[xr.DataArray, xr.DataArr
     total_energy : xr.DataArray   # units: J m^-2
     peak_energy  : xr.DataArray   # units: J m^-2
     day_of_peak  : xr.DataArray   # integer DoY (1–366)
+
+    Logging
+    -------
+    - INFO: reports daily integration and masks.
+    - DEBUG: shapes and dtype of outputs.
     """
+    log.info("Computing energy metrics from flux: dims=%s, dtype=%s", flux.sizes, flux.dtype)
 
     # Strict daily integration: NaN if *any* timestep that day is NaN
     def safe_integrate_day(da):
@@ -302,13 +333,19 @@ def compute_energy_metrics(flux: xr.DataArray) -> tuple[xr.DataArray, xr.DataArr
 
     # Group by day and apply strict integration
     daily_energy = flux.resample(time="1D").map(safe_integrate_day).astype("float32")
-
-    # If any day has NaN, set all outputs to NaN for that pixel
     invalid_mask = daily_energy.isnull().any(dim="time")
 
     total_energy = daily_energy.sum(dim="time", skipna=True).where(~invalid_mask)
     peak_energy = daily_energy.max(dim="time", skipna=True).where(~invalid_mask)
     peak_dates = daily_energy.astype("float64").idxmax(dim="time", skipna=True).where(~invalid_mask)
     day_of_peak = peak_dates.dt.dayofyear.where(~invalid_mask)
+
+    log.debug(
+        "Energy metrics shapes: daily=%s, total=%s, peak=%s, day_of_peak=%s",
+        daily_energy.sizes,
+        total_energy.sizes,
+        peak_energy.sizes,
+        day_of_peak.sizes,
+    )
 
     return daily_energy, total_energy, peak_energy, day_of_peak
