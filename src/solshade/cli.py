@@ -70,7 +70,7 @@ def _configure_cli_logging(
     """
     level = logging.DEBUG if verbose else logging.INFO
     configure_logging(level=level, log_file=logfile)
-    log.debug("CLI logging configured (level=%s, logfile=%s)", logging.getLevelName(level), str(logfile) if logfile else "None")
+    log.debug(f"CLI logging configured (level={logging.getLevelName(level)}, logfile={logfile or 'None'})")
 
 
 # =========================
