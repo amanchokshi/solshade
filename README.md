@@ -1,7 +1,16 @@
-# *solshade*
+<!-- Banner -->
+<p align="center">
+  <img src="docs/imgs/solshade.gif" alt="Solshade banner" style="width:100%; max-width:1200px;" />
+</p>
 
-**Terrain-aware solar illumination modeling from digital elevation data**
+<!-- <p align="left"> -->
+<!--   <a href="https://github.com/yourname/solshade/actions"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub_Actions-blue?logo=github"></a> -->
+<!--   <a href="https://pypi.org/project/solshade/"><img alt="PyPI" src="https://img.shields.io/pypi/v/solshade.svg"></a> -->
+<!--   <a href="https://your-project.readthedocs.io/"><img alt="Docs" src="https://img.shields.io/badge/docs-MkDocs%20Material-2962FF?logo=readthedocs"></a> -->
+<!--   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white"></a> -->
+<!-- </p> -->
 
+---
 `solshade` is a Python toolkit for simulating solar radiation across landscapes, accounting for terrain shadows, solar angles, and orbital geometry. It’s designed for interdisciplinary research at the intersection of astronomy, glaciology, botany, and geology.
 
 ---
