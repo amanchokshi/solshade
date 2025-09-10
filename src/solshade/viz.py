@@ -322,7 +322,7 @@ def plot_normals(normals_enu: xr.DataArray, ax: Axes | None = None) -> Axes:
 
     Parameters
     ----------
-    normal_enu : xarray.DataArray (3, y, x)
+    normals_enu : xarray.DataArray (3, y, x)
         ENU unit normal vectors. Bands: [east, north, up].
     ax : matplotlib.axes.Axes, optional
         Optional Matplotlib axis to plot on. If None, a new figure and axis are created.
