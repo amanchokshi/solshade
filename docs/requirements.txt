@@ -1,0 +1,11 @@
+mkdocs
+mkdocs-material
+mkdocstrings[python]
+mkdocs-autorefs
+mkdocs-gen-files
+mkdocs-literate-nav
+mkdocs-section-index
+mkdocs-git-revision-date-localized-plugin
+mkdocs-jupyter
+pymdown-extensions
+nbformat

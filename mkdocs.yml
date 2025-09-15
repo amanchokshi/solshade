@@ -1,0 +1,77 @@
+site_name: solshade
+site_url: https://solshade.readthedocs.io/
+repo_url: https://github.com/amanchokshi/solshade
+repo_name: amanchokshi/solshade
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.indexes
+    - content.code.copy
+    - toc.integrate
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: teal
+  icon:
+    logo: octicons/north-star-24
+    repo: fontawesome/brands/github-alt
+  favicon: imgs/favicon.ico
+
+plugins:
+  - gen-files:
+      scripts:
+        - docs/gen_api.py
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - src
+          options:
+            docstring_style: numpy
+            merge_init_into_class: true
+            separate_signature: true
+            show_source: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_if_no_docstring: false
+  - mkdocs-jupyter:
+      execute: false           # set true if you want to run cells on build
+      allow_errors: false
+      include_source: true     # show the notebook’s code cells
+      ignore_h1_titles: true   # let MkDocs/MateriaI handle page titles
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+      toc_depth: 2
+
+watch:
+  - src
+  - docs
+
+nav:
+  - Home: index.md
+  - Installation: guides/install.md
+  - Getting Started: 
+    - guides/index.md
+    - Command Line Tools: guides/cli.md
+    - Solshade Tutorial: notebooks/solshade_tutorial.ipynb
+  - API Reference:
+    - api/index.md
+    - solshade.cli: api/solshade.cli.md
+    - solshade.irradiance: api/solshade.irradiance.md
+    - solshade.solar: api/solshade.solar.md
+    - solshade.terrain: api/solshade.terrain.md
+    - solshade.utils: api/solshade.utils.md
+    - solshade.viz: api/solshade.viz.md
