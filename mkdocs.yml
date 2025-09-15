@@ -65,8 +65,8 @@ nav:
   - Installation: guides/install.md
   - Getting Started: 
     - guides/index.md
-    - Command Line Tools: guides/cli.md
     - Solshade Tutorial: notebooks/solshade_tutorial.ipynb
+    - Command Line Tools: guides/cli.md
   - API Reference:
     - api/index.md
     - solshade.cli: api/solshade.cli.md
