@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="https://github.com/amanchokshi/solshade/blob/main/docs/imgs/solshade.gif?raw=true" width="100%">
-</p>
+![](https://github.com/user-attachments/assets/69bef1b9-10b1-44d9-9bf0-46eac1fda3ce)
 ---
 `solshade` is a Python toolkit for simulating solar radiation across landscapes, accounting for terrain shadows, solar angles, and orbital geometry. It’s designed for interdisciplinary research at the intersection of astronomy, glaciology, botany, and geology.
 
