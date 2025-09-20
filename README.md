@@ -1,6 +1,6 @@
 <!-- Banner -->
 <p align="center">
-  <img src="docs/imgs/solshade.gif" alt="Solshade banner" style="width:100%; max-width:1200px;" />
+  <img src="https://github.com/amanchokshi/solshade/raw/main/docs/imgs/solshade.gif" alt="Solshade Banner" width="100%">
 </p>
 
 <!-- <p align="left"> -->
