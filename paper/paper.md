@@ -21,15 +21,15 @@ bibliography: paper.bib
   
 # Introduction
 
-**Solshade** [@solshade] is a Python library for modeling solar illumination
-over complex terrain using **Digital Elevation Models (DEMs)** and precise
-**orbital geometry**. It bridges geospatial analysis and astronomical modeling,
+*Solshade* [@solshade] is a Python library for modeling solar illumination
+over complex terrain using *Digital Elevation Models (DEMs)* and precise
+*orbital geometry*. It bridges geospatial analysis and astronomical modeling,
 enabling researchers to quantify how sunlight interacts with landscapes over
 time. Applications include studying permafrost thaw, plant life cycles,
 snowmelt dynamics, and other solar-driven processes in diverse environments.
 
-Solshade provides both a **command-line interface (CLI)** and a **Python API**.
-Outputs are written as **GeoTIFFs** for geospatial compatibility, and built-in
+Solshade provides both a *command-line interface (CLI)* and a *Python API*.
+Outputs are written as *GeoTIFFs* for geospatial compatibility, and built-in
 visualization tools allow rapid inspection of terrain attributes and solar flux
 maps.
 
@@ -41,7 +41,7 @@ Existing GIS tools focus on the geospatial and terrestrial aspects of this
 problem but offer no capability for integrating astronomical modeling of solar
 orbits or bridging these domains.
 
-**Solshade** fills this gap by combining terrain analysis, solar orbit
+*Solshade* fills this gap by combining terrain analysis, solar orbit
 forecasting, and ray-traced shading into a single, reproducible Python package
 It enables studies requiring both astronomical accuracy and geospatial
 flexibility.
@@ -84,7 +84,7 @@ Placeholder for beatiful figure coming soon....
 
 # Acknowledgements
 
-**Solshade** was inspired by many interesting conversations with Anna O'Flynn,
+*Solshade* was inspired by many interesting conversations with Anna O'Flynn,
 Anthony Zerafa & Chris Omelon at the McGill Arctic Research Station (MARS)
 on Axel Heiberg Island, 2025.
 
