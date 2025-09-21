@@ -80,7 +80,7 @@ for both terrain slope and topographic shading.
 
 # Demonstration
 
-Placeholder for beatiful figure coming soon....
+Placeholder for beautiful figure coming soon....
 
 # Acknowledgements
 
