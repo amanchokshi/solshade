@@ -21,12 +21,12 @@ bibliography: paper.bib
   
 # Introduction
 
-*Solshade* [@solshade] is a Python library for modeling solar illumination
-over complex terrain using *Digital Elevation Models (DEMs)* and precise
-*orbital geometry*. It bridges geospatial analysis and astronomical modeling,
-enabling researchers to quantify how sunlight interacts with landscapes over
-time. Applications include studying permafrost thaw, plant life cycles,
-snowmelt dynamics, and other solar-driven processes in diverse environments.
+*Solshade* is a Python library for modeling solar illumination over complex
+terrain using *Digital Elevation Models (DEMs)* and precise *orbital geometry*.
+It bridges geospatial analysis and astronomical modeling, enabling researchers
+to quantify how sunlight interacts with landscapes over time. Applications
+include studying permafrost thaw, plant life cycles, snowmelt dynamics, and
+other solar-driven processes in diverse environments.
 
 Solshade provides both a *command-line interface (CLI)* and a *Python API*.
 Outputs are written as *GeoTIFFs* for geospatial compatibility, and built-in
