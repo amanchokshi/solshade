@@ -40,7 +40,7 @@ Here are some essential project links:
 - [Home page and documentation](https://solshade.readthedocs.io/en/latest)
 - [Installing solshade](https://solshade.readthedocs.io/en/latest/guides/install)
 - [Getting started with solshade](https://solshade.readthedocs.io/en/latest/guides)
-- [solshade package](https://pypi.org/project/solshade) on the Python Package Index
+- [solshade package on PyPI](https://pypi.org/project/solshade)
 - [Issue tracker on github](https://github.com/amanchokshi/solshade/issues)
 
 ## Example Applications
