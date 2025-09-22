@@ -13,7 +13,7 @@ authors:
 affiliations:
   - name: Department of Physics, McGill University, Montréal, Québec H3A 2T8, Canada
     index: 1
-  - name: Trottier Space Institute, McGill University, Montréal, Québec H3A 2T8, Canada
+  - name: Trottier Space Institute, McGill University, Montréal, Québec H3A 2A7, Canada
     index: 2
 date: 21 September 2025
 bibliography: paper.bib
@@ -103,8 +103,12 @@ illumination across terrain features.](imgs/solshade.pdf){ width=100% }
 
 # Acknowledgements
 
-*Solshade* was inspired by many interesting conversations with Anna O'Flynn,
-Anthony Zerafa & Chris Omelon at the McGill Arctic Research Station (MARS)
-on Axel Heiberg Island, 2025.
+I would like to thank Anna O'Flynn, Anthony Zerafa & Chris Omelon, for the many
+fascinating conversations at the McGill Arctic Research Station (MARS) on Axel
+Heiberg Island, 2025. *Solshade* is the first of many ideas which were sparked
+by these discussions.
+
+A. C. acknowledges support from the Trottier Space Institute Fellowship program,
+which enabled parts of this research.
 
 # References
