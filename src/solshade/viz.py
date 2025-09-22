@@ -606,7 +606,7 @@ def plot_total_energy(total_energy: xr.DataArray, ax: Axes | None = None) -> Axe
     ax.set_title("Total Energy")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
-    plt.colorbar(im, ax=ax, label="Flux [J/m²]")
+    plt.colorbar(im, ax=ax, label="Flux (J/m²)")
     return ax
 
 
@@ -640,7 +640,7 @@ def plot_peak_energy(peak_energy: xr.DataArray, ax: Axes | None = None) -> Axes:
     ax.set_title("Peak Daily Energy")
     ax.set_xlabel("Easting (m)")
     ax.set_ylabel("Northing (m)")
-    plt.colorbar(im, ax=ax, label="Flux [J/m²]")
+    plt.colorbar(im, ax=ax, label="Flux (J/m²)")
     return ax
 
 
