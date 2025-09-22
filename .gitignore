@@ -214,3 +214,4 @@ __marimo__/
 
 # Ignore data dir
 data/
+paper/notebooks/
