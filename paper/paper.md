@@ -1,5 +1,5 @@
 ---
-title: "Solshade: Terrain-aware Solar Illumination Modeling using DEMs and Orbital Geometry"
+title: "Solshade: Terrain-aware Solar Illumination Modeling using Digital Elevation Models and Orbital Geometry"
 tags:
   - Python
   - Solar Radiation
