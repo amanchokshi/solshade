@@ -80,7 +80,26 @@ for both terrain slope and topographic shading.
 
 # Demonstration
 
-Placeholder for beautiful figure coming soon....
+To illustrate *Solshade*'s capabilities, we analyze a Digital Elevation Model
+(DEM) of an Arctic landscape and compute solar illumination metrics over an
+entire year. Figure 1 shows three geospatial layers produced by
+Solshade:
+(i) the input DEM,
+(ii) the total accumulated solar energy, and
+(iii) the day of peak solar energy for each pixel.
+
+The bottom panels show solar irradiance time series for eight selected
+locations, chosen to span the full range of total energy values. These
+light-curve panels highlight how topography strongly modulates solar exposure:
+valley pixels receive sunlight for only brief intervals, while ridgeline pixels
+remain illuminated nearly all day. The analysis demonstrates how *Solshade*
+integrates terrain geometry and solar orbital modeling to produce both spatial
+and temporal diagnostics of solar radiation.
+
+![Top row: (i) Digital Elevation Model, (ii) Total solar energy over the study
+period, and (iii) Day of peak solar energy. Bottom panels: Solar irradiance
+time series for eight selected locations, illustrating differences in diurnal
+illumination across terrain features.](imgs/solshade.pdf){ width=100% }
 
 # Acknowledgements
 
