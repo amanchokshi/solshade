@@ -36,15 +36,27 @@ maps.
 # Statement of Need
 
 Understanding the spatial and temporal variability of solar illumination over
-terrain is essential for environmental science, ecology, and energy modeling.
-Existing GIS tools focus on the geospatial and terrestrial aspects of this
-problem but offer no capability for integrating astronomical modeling of solar
-orbits or bridging these domains.
+terrain is essential for environmental science, ecology, hydrology, and energy
+modeling. Widely used GIS tools such as *GRASS GIS* and *SAGA GIS* provide
+terrain analysis and solar radiation estimates, but their focus remains
+primarily on geospatial processing. These packages often assume simplified
+astronomical inputs or fixed time intervals, offering limited control over
+orbital precision or temporal resolution.
 
-*Solshade* fills this gap by combining terrain analysis, solar orbit
-forecasting, and ray-traced shading into a single, reproducible Python package
-It enables studies requiring both astronomical accuracy and geospatial
-flexibility.
+Similarly, solar energy modeling tools like *pvlib* or *Solar Analyst*
+(ArcGIS) provide detailed solar irradiance calculations but lack functionality
+for high-resolution terrain shading analysis or integration with custom
+topographic datasets.
+
+*Solshade* bridges these critical gap by combining:
+
+1. *High-precision solar orbit modeling* using NASA ephemerides via *Skyfield*,
+2. *Terrain-aware ray-traced shading* over arbitrary DEMs,
+3. *Flexible Python API and CLI workflows* for reproducible analysis.
+
+This integration enables studies requiring both astronomical accuracy and
+geospatial flexibility, supporting applications from permafrost melt modeling
+to ecological microhabitat analysis.
 
 # Software Design and Theory
 
