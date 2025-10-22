@@ -24,9 +24,9 @@ bibliography: paper.bib
 *Solshade* is a Python library for modeling solar illumination over complex
 terrain using *Digital Elevation Models (DEMs)* and precise *orbital geometry*.
 It bridges geospatial analysis and astronomical modeling, enabling researchers
-to quantify how sunlight interacts with landscapes over time. Applications
-include studying permafrost thaw, plant life cycles, snowmelt dynamics, and
-other solar-driven processes in diverse environments.
+to precisely quantify how sunlight interacts with landscapes over time.
+Applications include studying permafrost thaw, plant life cycles, snowmelt
+dynamics, and other solar-driven processes in diverse environments.
 
 Solshade provides both a *command-line interface (CLI)* and a *Python API*.
 Outputs are written as *GeoTIFFs* for geospatial compatibility, and built-in
@@ -111,7 +111,9 @@ and temporal diagnostics of solar radiation.
 ![Top row: (i) Digital Elevation Model, (ii) Total solar energy over the study
 period, and (iii) Day of peak solar energy. Bottom panels: Solar irradiance
 time series for eight selected locations, illustrating differences in diurnal
-illumination across terrain features.](imgs/solshade.pdf){ width=100% }
+illumination across terrain features, with legends describing the altitude (ALT),
+aspect (ASP) and slope (SLP) of the sampled pixel.
+](imgs/solshade.pdf){ width=100% }
 
 # Acknowledgements
 
@@ -120,7 +122,10 @@ fascinating conversations at the McGill Arctic Research Station (MARS) on Axel
 Heiberg Island, 2025. *Solshade* is the first of many ideas which were sparked
 by these discussions.
 
-A. C. acknowledges support from the Trottier Space Institute Fellowship program,
-which enabled parts of this research.
+I acknowledge the Polar Continental Shelf Program for providing funding
+and logistical support for our research program. I also acknowledges
+support from the Trottier Space Institute Fellowship program, which enabled
+parts of this research. This research was undertaken, in part, thanks to
+funding from the Canada 150 Research Chairs Program.
 
 # References
