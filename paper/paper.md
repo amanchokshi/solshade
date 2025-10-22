@@ -1,5 +1,5 @@
 ---
-title: "Solshade: Terrain-aware Solar Illumination Modeling using Digital Elevation Models and Orbital Geometry"
+title: "Solshade: Terrain-aware Solar Illumination Modelling using Digital Elevation Models and Orbital Geometry"
 tags:
   - Python
   - Solar Radiation
@@ -30,7 +30,7 @@ dynamics, and other solar-driven processes in diverse environments.
 
 Solshade provides both a *command-line interface (CLI)* and a *Python API*.
 Outputs are written as *GeoTIFFs* for geospatial compatibility, and built-in
-visualization tools allow rapid inspection of terrain attributes and solar flux
+visualisation tools allow rapid inspection of terrain attributes and solar flux
 maps.
 
 # Statement of Need
@@ -92,7 +92,7 @@ for both terrain slope and topographic shading.
 
 # Demonstration
 
-To illustrate *Solshade*'s capabilities, we analyze a Digital Elevation Model
+To illustrate *Solshade*'s capabilities, we analyse a Digital Elevation Model
 (DEM) of an Arctic landscape and compute solar illumination metrics over an
 entire year. Figure 1 shows three geospatial layers produced by
 Solshade:
