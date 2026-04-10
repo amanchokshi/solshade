@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "solshade"
-version = "0.1.0"
+version = "0.1.1"
 description = "Terrain-aware solar illumination modeling using DEMs and orbital sun geometry."
 keywords = ["solar", "terrain", "GIS", "geospatial", "DEM", "illumination"]
 authors = [{ name = "Aman Chokshi", email = "aman.chokshi@mcgill.ca" }]
