@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
 [project]
 name = "solshade"
 version = "0.1.0"
@@ -6,13 +10,14 @@ keywords = ["solar", "terrain", "GIS", "geospatial", "DEM", "illumination"]
 authors = [{ name = "Aman Chokshi", email = "aman.chokshi@mcgill.ca" }]
 license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
@@ -22,8 +27,9 @@ dependencies = [
     "joblib>=1.5.1",
     "matplotlib>=3.10.5",
     "more-itertools>=10.7.0",
-    "numba==0.61.2",
-    "numpy==2.2",
+    "numba>=0.57.0,<0.63; python_version < '3.14'",
+    "numba>=0.63; python_version >= '3.14'",
+    "numpy>=2.2",
     "pandas>=2.3.1",
     "rasterio>=1.4.3",
     "rich>=14.1.0",
@@ -41,10 +47,6 @@ Issues = "https://github.com/amanchokshi/solshade/issues"
 
 [project.scripts]
 solshade = "solshade.cli:main"
-
-[build-system]
-requires = ["hatchling>=1.25"]
-build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/solshade"]
