@@ -10,7 +10,7 @@ keywords = ["solar", "terrain", "GIS", "geospatial", "DEM", "illumination"]
 authors = [{ name = "Aman Chokshi", email = "aman.chokshi@mcgill.ca" }]
 license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -58,10 +58,6 @@ include = [
   "README.md",
   "LICENSE",
 ]
-
-[tool.setuptools]
-package-dir = { "" = "src" }
-packages = { find = { where = ["src"] } }
 
 [tool.uv]
 package = true
