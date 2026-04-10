@@ -97,6 +97,10 @@ check = "pyright"
 coverage = { cmd = "pytest --cov=solshade --cov-report=term-missing", env = { PYTHONPATH = "src" } }
 all = ["fmt", "lint", "check", "coverage"]
 
+[tool.coverage.run]
+source = ["solshade"]
+patch = ["subprocess"] # Needed for pytest-cov>=7 so coverage includes subprocess-based CLI tests.
+
 [tool.ruff]
 target-version = "py310"
 line-length = 128
