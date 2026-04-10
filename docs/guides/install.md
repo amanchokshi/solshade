@@ -1,6 +1,6 @@
 # Installation
 
-Solshade targets Python **3.13+** on Linux, macOS, untested on windows, but should support WSL.  
+Solshade targets Python **3.10+** on Linux, macOS, untested on windows, but should support WSL.  
 We recommend installing inside a **virtual environment** so your setup stays isolated from system Python.
 
 ---

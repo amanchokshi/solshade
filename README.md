@@ -1,7 +1,7 @@
 ![](https://github.com/user-attachments/assets/69bef1b9-10b1-44d9-9bf0-46eac1fda3ce)
 
 [![PyPI](https://img.shields.io/pypi/v/solshade.svg?logo=pypi&logoColor=white&label=PyPI&color=2a3573)](https://pypi.org/project/solshade/)
-[![Python](https://img.shields.io/badge/Python-3.13%2B-34777e?logo=python&logoColor=white)](https://pypi.org/project/solshade/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-34777e?logo=python&logoColor=white)](https://pypi.org/project/solshade/)
 [![CI](https://img.shields.io/github/actions/workflow/status/amanchokshi/solshade/ci.yml?branch=main&logo=github&color=82af74)](https://github.com/amanchokshi/solshade/actions/workflows/ci.yml)
 [![codecov](https://img.shields.io/codecov/c/github/amanchokshi/solshade/main.svg?logo=codecov&logoColor=white&label=Coverage&color=f9dc28)](https://codecov.io/gh/amanchokshi/solshade)
 [![Docs](https://img.shields.io/readthedocs/solshade/latest?logo=Read%20The%20Docs&logoColor=white&color=ea7b17)](https://solshade.readthedocs.io/en/latest/)
