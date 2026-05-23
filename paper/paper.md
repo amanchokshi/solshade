@@ -35,22 +35,25 @@ maps.
 
 # Statement of Need
 
+
 Understanding the spatial and temporal variability of solar illumination over
 terrain is essential for environmental science, ecology, hydrology, and energy
-modelling. Widely used GIS tools such as *GRASS GIS* and *SAGA GIS* provide
-terrain analysis and solar radiation estimates, but their focus remains
-primarily on geospatial processing. These packages often assume simplified
-astronomical inputs or fixed time intervals, offering limited control over
-orbital precision or temporal resolution.
+modelling. Existing geospatial platforms such as GRASS GIS [@grass] and
+SAGA GIS [@saga] provide terrain analysis and solar radiation workflows,
+while Python packages such as TopoCalc [@topocalc] support topographic
+calculations and illumination metrics.
 
-Similarly, solar energy modelling tools like *pvlib* or *Solar Analyst*
-(ArcGIS) provide detailed solar irradiance calculations but lack functionality
-for high-resolution terrain shading analysis or integration with custom
+However, these tools primarily emphasise geospatial processing and often
+assume simplified astronomical inputs or fixed temporal sampling, offering
+limited control over orbital precision and observation cadence. Similarly,
+solar energy modelling frameworks such as pvlib [@pvlib] and Solar Analyst
+(ArcGIS) provide detailed irradiance calculations, but lack functionality for
+high-resolution terrain-aware shading analysis or integration with custom
 topographic datasets.
 
 *Solshade* bridges these critical gaps by combining:
 
-1. *High-precision solar orbit modelling* using NASA ephemerides via *Skyfield*,
+1. *High-precision solar ephemeris modelling* using NASA ephemerides via *Skyfield*,
 2. *Terrain-aware ray-traced shading* over arbitrary DEMs,
 3. *Flexible Python API and CLI workflows* for reproducible analysis.
 
