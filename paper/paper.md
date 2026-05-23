@@ -4,7 +4,7 @@ tags:
   - Python
   - Solar Radiation
   - Terrain Analysis
-  - Geospatial Modeling
+  - Geospatial Modelling
   - Digital Elevation Models
 authors:
   - name: Aman Chokshi
@@ -21,9 +21,9 @@ bibliography: paper.bib
   
 # Introduction
 
-*Solshade* is a Python library for modeling solar illumination over complex
+*Solshade* is a Python library for modelling solar illumination over complex
 terrain using *Digital Elevation Models (DEMs)* and precise *orbital geometry*.
-It bridges geospatial analysis and astronomical modeling, enabling researchers
+It bridges geospatial analysis and astronomical modelling, enabling researchers
 to precisely quantify how sunlight interacts with landscapes over time.
 Applications include studying permafrost thaw, plant life cycles, snowmelt
 dynamics, and other solar-driven processes in diverse environments.
@@ -37,31 +37,31 @@ maps.
 
 Understanding the spatial and temporal variability of solar illumination over
 terrain is essential for environmental science, ecology, hydrology, and energy
-modeling. Widely used GIS tools such as *GRASS GIS* and *SAGA GIS* provide
+modelling. Widely used GIS tools such as *GRASS GIS* and *SAGA GIS* provide
 terrain analysis and solar radiation estimates, but their focus remains
 primarily on geospatial processing. These packages often assume simplified
 astronomical inputs or fixed time intervals, offering limited control over
 orbital precision or temporal resolution.
 
-Similarly, solar energy modeling tools like *pvlib* or *Solar Analyst*
+Similarly, solar energy modelling tools like *pvlib* or *Solar Analyst*
 (ArcGIS) provide detailed solar irradiance calculations but lack functionality
 for high-resolution terrain shading analysis or integration with custom
 topographic datasets.
 
-*Solshade* bridges these critical gap by combining:
+*Solshade* bridges these critical gaps by combining:
 
-1. *High-precision solar orbit modeling* using NASA ephemerides via *Skyfield*,
+1. *High-precision solar orbit modelling* using NASA ephemerides via *Skyfield*,
 2. *Terrain-aware ray-traced shading* over arbitrary DEMs,
 3. *Flexible Python API and CLI workflows* for reproducible analysis.
 
 This integration enables studies requiring both astronomical accuracy and
-geospatial flexibility, supporting applications from permafrost melt modeling
+geospatial flexibility, supporting applications from permafrost melt modelling
 to ecological microhabitat analysis.
 
 # Software Design and Theory
 
-Solshade computes solar flux using four main components: terrain modeling,
-horizon mapping, orbital modeling, and flux computation.
+Solshade computes solar flux using four main components: terrain modelling,
+horizon mapping, orbital modelling, and flux computation.
 
 ## Terrain Modelling
 
@@ -72,7 +72,7 @@ normals form the basis for Lambertian solar flux calculations.
 ## Horizon Mapping
 
 Shadows depend on local topography. For each pixel, Solshade samples discrete
-azimuthal rays, tracing elevations outward from the pixel center. The peak
+azimuthal rays, tracing elevations outward from the pixel centre. The peak
 elevations along each ray define the local horizon profile, enabling shadow
 masking at arbitrary solar positions.
 
@@ -102,10 +102,10 @@ Solshade:
 
 The bottom panels show solar irradiance time series for eight selected
 locations, chosen to span the full range of total energy values. These
-light-curve panels highlight how topography strongly modulates solar exposure:
+light curve panels highlight how topography strongly modulates solar exposure:
 valley pixels receive sunlight for only brief intervals, while ridgeline pixels
 remain illuminated nearly all day. The analysis demonstrates how *Solshade*
-integrates terrain geometry and solar orbital modeling to produce both spatial
+integrates terrain geometry and solar orbital modelling to produce both spatial
 and temporal diagnostics of solar radiation.
 
 ![Top row: (i) Digital Elevation Model, (ii) Total solar energy over the study
@@ -117,13 +117,13 @@ aspect (ASP) and slope (SLP) of the sampled pixel.
 
 # Acknowledgements
 
-I would like to thank Anna O'Flynn, Anthony Zerafa & Chris Omelon, for the many
+I would like to thank Anna O'Flynn, Anthony Zerafa and Chris Omelon for the many
 fascinating conversations at the McGill Arctic Research Station (MARS) on Axel
 Heiberg Island, 2025. *Solshade* is the first of many ideas which were sparked
 by these discussions.
 
 I acknowledge the Polar Continental Shelf Program for providing funding
-and logistical support for our research program. I also acknowledges
+and logistical support for our research program. I also acknowledge
 support from the Trottier Space Institute Fellowship program, which enabled
 parts of this research. This research was undertaken, in part, thanks to
 funding from the Canada 150 Research Chairs Program.
