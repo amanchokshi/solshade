@@ -1,0 +1,28 @@
+cff-version: "1.2.0"
+authors:
+- family-names: Chokshi
+  given-names: Aman
+  orcid: "https://orcid.org/0000-0003-1130-6390"
+doi: 10.5281/zenodo.20405097
+message: If you use this software, please cite our article in the
+  Journal of Open Source Software.
+preferred-citation:
+  authors:
+  - family-names: Chokshi
+    given-names: Aman
+    orcid: "https://orcid.org/0000-0003-1130-6390"
+  date-published: 2026-06-02
+  doi: 10.21105/joss.09944
+  issn: 2475-9066
+  issue: 122
+  journal: Journal of Open Source Software
+  publisher:
+    name: Open Journals
+  start: 9944
+  title: "Solshade: Terrain-aware Solar Illumination Modelling using
+    Digital Elevation Models and Orbital Geometry"
+  type: article
+  url: "https://joss.theoj.org/papers/10.21105/joss.09944"
+  volume: 11
+title: "Solshade: Terrain-aware Solar Illumination Modelling using
+  Digital Elevation Models and Orbital Geometry"
